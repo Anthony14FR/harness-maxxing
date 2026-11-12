@@ -92,7 +92,7 @@ price or a term that is not in it.
 
 | What | How |
 |---|---|
-| **Delegate** | A lead gives a task to one of its **direct reports** (never further down, never across the chart). It becomes a normal entry of the [Tasks](tasks) file, labelled with the enterprise, and the report receives it. |
+| **Delegate** | A lead gives a task to one of its **direct reports** (never further down, never across the chart), whatever the report's department: no request is needed. It becomes a normal entry of the [Tasks](tasks) file, labelled with the enterprise, and the report receives it. |
 | **Hand in** | The report says it is done, with a summary: it goes to the **requester's** inbox, never to you. The lead accepts it or sends it back with notes. |
 | **Block** | A report that cannot go on says why; the task shows **Blocked** with the reason. |
 | **Escalate** | A position that needs a decision asks **one level up**, saying what it tried, the options and its recommendation. |
@@ -116,7 +116,7 @@ names its target (`--position`, with `--job` or `--agent`), which must be in the
 | Request | Careful | Balanced | Autonomous |
 |---|---|---|---|
 | Assign to a direct report, read the profile, write in one's own department | free | free | free |
-| Deliver into another department's folder, assign across departments | you | lead | lead |
+| Deliver into another department's folder, ask for work from another department | you | lead | lead |
 | Edit a report's job description | you | lead | lead |
 | Create a worker from an approved template | you | lead | lead |
 | Edit the company profile (not prices or terms) | you | lead | lead |
