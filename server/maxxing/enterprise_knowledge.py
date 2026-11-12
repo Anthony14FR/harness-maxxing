@@ -65,9 +65,17 @@ def _chart_line(slug: str, d: dict, pos: dict) -> str:
             "(a lead), profile [--section S], show.")
 
 
+ZERO_NOTE = ("Total autonomy: be maximally proactive. Never wait: chase late work, decide at your level, and follow "
+             "your delegations with `maxxing enterprise tasks --mine`. Your lead decides what you cannot; the CEO has "
+             "the last word. Never write to the owner: only the top position reports, with `maxxing enterprise "
+             "report-to-owner`. Run `maxxing` commands alone on their line (no pipes) so they are not held.")
+
+
 def _parts(slug: str, d: dict, pos: dict, about_text: str | None = None) -> tuple[str, list[tuple[str, str]]]:
     """(the chart line, the labelled texts) a position's note is made of, before any cap."""
     line = _chart_line(slug, d, pos)
+    if (d.get("settings") or {}).get("zero_intervention"):
+        line = line + chr(10) * 2 + ZERO_NOTE
     dept = d["departments"].get(pos["department"]) if pos["department"] else None
     about_text = _read_text(enterprises.folder(slug) / ABOUT_FILE) if about_text is None else about_text
     return line, [("Enterprise", about_text), (f"Department {dept['name']}" if dept else "", dept["notes"] if dept else ""),

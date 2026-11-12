@@ -152,7 +152,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "escalation_timeout_h": 4,
     "digest": {"enabled": False, "hour": 8, "per_lead": False, "titles_only": False},
     "weekly": False, "monthly": False,
-    "top_decides": False, "shared_keys": [], "review_by": "",
+    "top_decides": False, "shared_keys": [], "review_by": "", "zero_intervention": False,
     "desk": {"enabled": False, "label": "", "retention_days": 30,
              "public": {"enabled": False, "token": "", "rate_per_hour": 20, "max_chars": 1000}},
     "limits": {"depth": 4, "reports": 8, "workers_live": 5, "hops_per_task": 6},
@@ -164,7 +164,7 @@ _CHECKS: dict[str, Callable[[Any], Any]] = {
     "digest": _group({"enabled": _bool, "hour": lambda v: _int(v, 0, 23), "per_lead": _bool, "titles_only": _bool},
                      DEFAULT_SETTINGS["digest"]),
     "weekly": _bool, "monthly": _bool,
-    "top_decides": _bool, "shared_keys": lambda v: _names(v) or [], "review_by": lambda v: _review_by(v),
+    "top_decides": _bool, "zero_intervention": _bool, "shared_keys": lambda v: _names(v) or [], "review_by": lambda v: _review_by(v),
     "desk": _group({"enabled": _bool, "label": lambda v: _text(v, 60), "retention_days": lambda v: _int(v, 1, 365),
                     "public": _group({"enabled": _bool, "token": _token, "rate_per_hour": lambda v: _int(v, 1, 600),
                                       "max_chars": lambda v: _int(v, 50, 4000)},
@@ -514,11 +514,16 @@ def department_of(slug: str, pos: str) -> str:
     return p["department"] if p else ""
 
 
+ZERO_FORCED = {"autonomy": "autonomous", "trust_chain": True, "top_decides": True}
+
+
 def setting(slug: str, name: str, pos: str | None = None) -> Any:
     """An enterprise setting, with the override of the position's department when it has one."""
     d = _index()["by"].get(slug)
     if not d:
         return None
+    if name in ZERO_FORCED and d["settings"].get("zero_intervention"):
+        return ZERO_FORCED[name]                     # zero intervention wins over stored values and department overrides
     if pos:
         dept = department_of(slug, pos)
         over = (d["departments"].get(dept) or {}).get("settings") or {}
@@ -785,6 +790,8 @@ def update(slug: str, fields: dict) -> dict:
             d["top"] = f["top"]
             if f["top"] == "owner":
                 d["settings"]["top_decides"] = False     # a setting about the top never lands on the next one
+        if d["settings"].get("zero_intervention") and d["top"] == "owner":
+            raise EnterpriseError(400, "needs_top", "Total autonomy needs a top position (the CEO has the last word)")
         return sorted(f)
 
     _apply(slug, edit, lambda d, keys: "Updated " + ", ".join(keys))
@@ -926,6 +933,7 @@ def get(slug: str, with_state: bool = True) -> dict:
     out["cost_today"], out["ceiling_hit"] = 0.0, False
     out["sandbox_available"], out["budget_warnings"] = _sandbox_available(), []
     st = d.get("settings") or {}
+    out["effective"] = {k: (v if st.get("zero_intervention") else st.get(k)) for k, v in ZERO_FORCED.items()}
     out["settings_warnings"] = ["top_decides_needs_trust_chain"] if st.get("top_decides") and not st.get("trust_chain") else []
     if d.get("broken"):
         return out

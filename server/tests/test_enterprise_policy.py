@@ -767,3 +767,41 @@ def test_an_old_assign_cross_request_still_decides_and_a_new_one_is_refused(ent)
                                         "outside": False}]}), encoding="utf-8")
     assert pol.decide(SLUG, "old1", "allow")["status"] == "allowed"
     assert pol._label("assign_cross") == "Assign across departments"
+
+
+# ---- total autonomy -------------------------------------------------------------------------------------------
+def test_zero_needs_a_top_and_exposes_effective_values(ent):
+    r = ent.patch(E, json={"settings": {"zero_intervention": True}})
+    assert r.status_code == 400 and r.json()["error"] == "needs_top"
+    _set(ent, top="boss", settings={"autonomy": "careful", "zero_intervention": True})
+    d = ent.get(E).json()
+    assert d["settings"]["autonomy"] == "careful" and d["settings"]["trust_chain"] is False
+    assert d["effective"] == {"autonomy": "autonomous", "trust_chain": True, "top_decides": True}
+    assert enterprises.setting(SLUG, "autonomy", "writer") == "autonomous" and pol.zero(SLUG)
+    assert ent.patch(E, json={"top": "owner"}).json()["error"] == "needs_top"
+    _set(ent, settings={"zero_intervention": False})
+    assert ent.get(E).json()["effective"]["autonomy"] == "careful" and not pol.zero(SLUG)
+
+
+def test_zero_requests_go_to_the_n_plus_one(ent):
+    _set(ent, top="boss", settings={"autonomy": "careful", "zero_intervention": True})
+    r = pol.request(SLUG, "writer", "publish", "Post the announcement")
+    assert r["decider"] == "head" and _msgs("head", "request")
+    assert pol.decide(SLUG, r["id"], "allow", by="head")["status"] == "allowed"
+    own = pol.request(SLUG, "boss", "publish", "Announce the price list")
+    assert own["decider"] == "boss"
+    assert pol.decide(SLUG, own["id"], "allow", by="boss")["status"] == "allowed"
+    assert any("decided its own request" in x["text"] for x in enterprises.decisions(SLUG)[0])
+    for cat in ("hire", "hire_remove", "profile_terms", "desk_live"):
+        assert pol.decider(SLUG, "writer", cat) == "owner", cat
+    assert pol.decider(SLUG, "writer", "publish", outside=True) == "owner"
+
+
+def test_zero_skips_an_unavailable_lead_and_stops_at_the_top(ent):
+    _set(ent, top="boss", settings={"zero_intervention": True})
+    ent.patch(f"{E}/positions/head", json={"agent": None, "rev": ent.get(E).json()["rev"]})
+    r = pol.request(SLUG, "writer", "publish", "Post it")
+    assert r["decider"] == "boss"
+    assert pol._pick(SLUG, "writer", after="boss") == "boss"
+    ent.patch(f"{E}/positions/boss", json={"agent": None, "rev": ent.get(E).json()["rev"]})
+    assert pol.request(SLUG, "writer", "publish", "Again")["decider"] == "owner"
