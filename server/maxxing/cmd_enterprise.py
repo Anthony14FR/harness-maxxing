@@ -16,10 +16,12 @@ Structure (the owner's: refused in every agent turn):
 Readable by an agent of the enterprise (a sandboxed turn sees its own position, its lead and its reports only):
   maxxing enterprise show [SLUG] [--json]                  the chart as a tree, with every position's state
   maxxing enterprise profile [--section S] [--json]        the company profile (S: products, hours, terms, contact, faq)
+  maxxing enterprise tasks [--mine] [--all] [--json]       the delegated tasks (--mine: asked or held by the caller; --all: done too)
 From an agent turn, as the position of the caller (the owner passes --as POSITION, --enterprise SLUG when several):
   maxxing enterprise assign POSITION TEXT [--due D] [--parent T] [--task T]   a task for a direct report
   maxxing enterprise done TASK TEXT | block TASK TEXT      hand in / report a blocker on a task of the caller
   maxxing enterprise escalate TEXT [--task T]              ask one level up
+  maxxing enterprise report-to-owner TEXT                  the top position tells the owner (it alone does)
   maxxing enterprise answer ID TEXT                        answer an escalation
   maxxing enterprise request CATEGORY TEXT [--amount N]    an organizational request, routed by category
   maxxing enterprise request hire WHY --title T --topic projects/<p>/topics/<t> [--department D] [--reports-to P] [--job TEXT]
@@ -44,7 +46,7 @@ import time
 from . import cli
 
 TURN_CMDS = ("assign", "done", "block", "escalate", "answer", "request", "decide", "objective", "profile", "route",
-             "worker", "meeting", "review")
+             "worker", "meeting", "review", "tasks", "report-to-owner")
 HIRE_KEYS = ("title", "department", "reports_to", "job", "topic", "name", "role", "model", "effort")
 STRUCTURE_CMDS = ("list", "create", "link", "unlink", "position", "settings", "grant", "report", "decisions", "export",
                   "import")
@@ -154,6 +156,13 @@ def _configure(p) -> None:
     who(s)
     s = sub.add_parser("answer", help="answer an escalation")
     s.add_argument("id")
+    s.add_argument("text", nargs="+")
+    who(s)
+    s = sub.add_parser("tasks", help="the delegated tasks")
+    s.add_argument("--mine", action="store_true", help="the tasks the caller asked for or holds")
+    s.add_argument("--all", action="store_true", help="the done ones too")
+    who(s)
+    s = sub.add_parser("report-to-owner", help="the top position tells the owner")
     s.add_argument("text", nargs="+")
     who(s)
     s = sub.add_parser("request", help="an organizational request")
@@ -597,11 +606,36 @@ def _text(a) -> str:
     return t
 
 
+def _ago(at: float) -> str:
+    h = max(0.0, time.time() - float(at or 0)) / 3600
+    return f"{h * 60:.0f}m" if h < 1 else f"{h:.0f}h" if h < 48 else f"{h / 24:.0f}d"
+
+
+def _tasks(a, slug: str, pos: str) -> int:
+    rows = _module("enterprise_flow", "tasks_view")(slug, include_done=a.all)
+    if a.mine:
+        rows = [r for r in rows if pos and pos in (r["owner"], r["requester"])]
+    if a.json:
+        _out(rows)
+        return 0 if rows else 1
+    for r in rows:
+        state = r["stage"] or r["status"]
+        print(f"{r['id']}  {state:<14} owner {r['owner'] or '-':<12} from {r['requester'] or 'owner':<12} "
+              f"age {_ago(r['created']):>4}  last move {_ago(r['last_move']):>4}  hops {r['hops']}"
+              f"{'  outside' if r['outside'] else ''}  {r['title'][:70]}")
+    return 0 if rows else 1
+
+
 def _turn_cmd(a) -> int:
     c = a.enterprise_cmd
     if c == "profile":
         return _profile(a)
     slug, pos, turn = _actor(a)
+    if c == "tasks":
+        return _tasks(a, slug, pos)
+    if c == "report-to-owner":
+        r = _module("enterprise_flow", "report_to_owner")(slug, pos, _text(a), session=turn["session"])
+        return _say(a, r, "reported to the owner")
     sess, outside = turn["session"], turn["outside"]
     if c == "assign":
         t = _module("enterprise_flow", "assign")(slug, pos or None, a.position, _text(a), due=a.due, parent=a.parent,

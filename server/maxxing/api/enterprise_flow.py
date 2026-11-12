@@ -67,6 +67,25 @@ def answer_escalation(e: str, esc_id: str, body: AnswerIn):
         raise _bad(x) from None
 
 
+@router.get("/{e}/tasks")
+def list_tasks(e: str):
+    _on()
+    try:
+        return {"items": enterprise_flow.tasks_view(e, include_done=True)}
+    except enterprises.EnterpriseError as x:
+        raise _bad(x) from None
+
+
+@router.get("/{e}/now")
+def now(e: str):
+    _on()
+    try:
+        enterprises.load(e)
+        return {"items": enterprise_flow.now_view(e)}
+    except enterprises.EnterpriseError as x:
+        raise _bad(x) from None
+
+
 def _meeting(m: dict) -> dict:
     keys = ("id", "topic", "organizer", "participants", "status", "replies", "minutes", "at", "deadline")
     return {k: m.get(k) for k in keys}
