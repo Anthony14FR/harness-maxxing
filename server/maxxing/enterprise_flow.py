@@ -596,18 +596,7 @@ def assign(slug: str, from_pos: str, to_pos: str, deliverable: str, *, due: str 
             raise EnterpriseError(400, "invalid", "A position cannot assign to itself")
         if to_pos not in enterprises.reports_of(slug, from_pos):
             raise EnterpriseError(403, "not_report", f"{to_pos} is not a direct report of {from_pos}")
-        # approved: called back by the policy once the request was allowed (no second request)
-        if not approved and enterprises.department_of(slug, from_pos) != enterprises.department_of(slug, to_pos):
-            who, pol = "free", _mod("enterprise_policy")
-            if pol and hasattr(pol, "decider"):
-                who = pol.decider(slug, from_pos, "assign_cross", outside=outside)
-            if who != "free":
-                req = pol.request(slug, from_pos, "assign_cross", f"Assign to {to_pos}: {deliverable}",
-                                  session=session, outside=outside,
-                                  payload={"to_pos": to_pos, "deliverable": deliverable, "due": due, "parent": parent})
-                enterprises.log(slug, "assign", f"{from_pos} asks to assign across departments to {to_pos}: a request is open",
-                                by=from_pos, position=to_pos, session=session)
-                return req
+        # a lead's own direct reports are its to command, whatever their department: never a request
     limit = int((enterprises.setting(slug, "limits", to_pos) or {}).get("hops_per_task") or 6)
     existing, e0 = _load_task(slug, task or "")
     pe = _ent(_load_task(slug, parent or "")[0], slug) if parent and not e0 else None

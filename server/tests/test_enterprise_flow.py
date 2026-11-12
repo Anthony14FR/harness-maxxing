@@ -191,14 +191,14 @@ def test_assign_rules(ent, mx):
         flow.assign(S, "ceo", "writer", "  ")
 
 
-def test_cross_department_request(ent, policy, mx):
+def test_a_direct_report_in_another_department_is_assigned_without_a_request(ent, policy, mx):
     rev = ent.get(f"{E}/{S}").json()["rev"]
     assert ent.patch(f"{E}/{S}/positions/editor", json={"department": "ops", "rev": rev}).status_code == 200
-    policy.decider = lambda slug, pos, cat, **kw: "lead"
-    req = flow.assign(S, "ceo", "editor", "NOTOOL cross")
-    assert req["category"] == "assign_cross" and policy.requests_made[0][:2] == ("ceo", "assign_cross")
-    assert not (mx["ws"] / "tasks.json").exists() or _tasks(mx) == []
-    assert _inbox("editor") == []
+    policy.decider = lambda slug, pos, cat, **kw: "owner"      # even where every request would reach the owner
+    t = flow.assign(S, "ceo", "editor", "NOTOOL cross")
+    assert t["enterprise"]["owner"] == "editor" and t["enterprise"]["requester"] == "ceo"
+    assert policy.requests_made == []
+    assert [i["kind"] for i in _inbox("editor")] == ["assign"]
 
 
 def test_chain_and_hops(ent, notes, mx):
