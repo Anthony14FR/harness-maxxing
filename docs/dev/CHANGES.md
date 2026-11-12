@@ -295,7 +295,8 @@ shown in the product. Newest first, same version headings as `CHANGELOG.md`.
   `agents.update`); seat `409 project_not_linked` or body `link_project`; hire body `name, role, model, effort`.
   `agents.run_settings` adds `enterprises.shared_keys_for(path)` (inside the envelopes, none for an `untrusted_code`
   position, none in a desk turn). Agents: `effort` (`""|low|medium|high|xhigh|max`, `bad_effort`), `--effort` passed
-  to `claude`. Notifications, Telegram cards and decision texts use `config` `language` (en/fr tables per module).
+  to `claude`. Web: `settings_warnings` (Settings callout with a Trust switch), `hire` cards show the payload fields and
+  `outside` (`HireDetails`), `untrusted_unfit` reasons and blocked reason texts, mock updated. Notifications, Telegram cards and decision texts use `config` `language` (en/fr tables per module).
 - Enterprises (an org chart of agents above projects; off by default, config `enterprises_page`, needs
   `agents_page`, no migration). Modules: `enterprises.py` (files, lookups, structure, `rev`, lock `enterprises`),
   `enterprise_flow.py` (inboxes, deliveries, delegated tasks, escalations, the tick loop), `enterprise_policy.py`

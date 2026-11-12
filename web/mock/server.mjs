@@ -2071,7 +2071,7 @@ function entView(id) {
     const state = !p.agent || !a ? 'vacant' : !a.enabled ? 'off' : a.waiting ? 'waiting' : a.running_now ? 'working' : a.thread_unread ? 'unread' : 'idle'
     return { ...p, desk: !!p.desk, state, occupant: a ? { path: a.path, display_name: a.display_name, avatar: a.avatar, enabled: a.enabled, sandbox: a.sandbox } : null,
       cost_today: a ? a.cost_today : 0, inbox: p.id === 'writer' ? 2 : 0, open_tasks: a ? 1 : 0, blocked_reason: '',
-      untrusted_code: !!p.untrusted_code, note_chars: 600 + (p.job || '').length * 3 + (p.id === 'director' ? 2600 : 0), note_cut: p.id === 'director' }
+      untrusted_code: !!p.untrusted_code, untrusted_unfit: p.untrusted_code && a ? [...(a.sandbox ? [] : ['not_sandboxed']), ...(a.keys?.length ? ['holds_keys'] : [])] : [], note_chars: 600 + (p.job || '').length * 3 + (p.id === 'director' ? 2600 : 0), note_cut: p.id === 'director' }
   })
   const warn = (dept, ceiling) => {
     const agents = positions.filter((p) => (dept === '' || p.department === dept) && p.occupant).map((p) => p.occupant.path)
@@ -2080,7 +2080,7 @@ function entView(id) {
   }
   const budget_warnings = [...Object.entries(e.departments).flatMap(([d, x]) => warn(d, x.envelope?.usd_per_day ?? null)), ...warn('', e.envelope.usd_per_day ?? null)]
   return { id, name: e.name, emoji: e.emoji, rev: e.rev, projects: e.projects, top: e.top, settings: e.settings, envelope: e.envelope, departments: e.departments,
-    objectives: e.objectives, grants: e.grants, broken: false, sandbox_available: true, budget_warnings, positions, cost_today: +positions.reduce((n, p) => n + p.cost_today, 0).toFixed(2), ceiling_hit: false }
+    objectives: e.objectives, grants: e.grants, broken: false, sandbox_available: true, settings_warnings: e.settings.top_decides && !e.settings.trust_chain ? ['top_decides_needs_trust_chain'] : [], budget_warnings, positions, cost_today: +positions.reduce((n, p) => n + p.cost_today, 0).toFixed(2), ceiling_hit: false }
 }
 const entMerge = (a, b) => (b && typeof b === 'object' && !Array.isArray(b) ? Object.fromEntries([...new Set([...Object.keys(a || {}), ...Object.keys(b)])].map((k) => [k, k in b ? entMerge((a || {})[k], b[k]) : a[k]])) : b)
 const entTouch = (e, id) => { e.rev += 1; bus('enterprises', `enterprises:${id}`) }
@@ -2199,6 +2199,7 @@ const entState = (e) => (e.live ||= {
   about: 'Acme sells starter kits for home gardens. We write in plain language and never promise delivery dates.',
   profile: { products: [{ name: 'Starter kit', price: '29 USD', url: 'https://shop.example.com/starter', notes: '' }], hours: 'Mon-Fri 9:00-18:00 CET', terms: { refund_days: 30, shipping: '2-4 days in the EU' }, contact: '', faq: [{ q: 'Does the kit work with model Y?', a: 'Yes, since version 2.' }] },
   requests: [
+    { id: 'r2', category: 'hire', position: 'marketing-lead', text: 'Hire a social media editor.', amount: null, status: 'pending', decider: 'owner', at: now() - 900, outside: true, title: 'Social media editor', department: 'marketing', reports_to: 'marketing-lead', topic: 'social', name: 'editor', role: 'You write and schedule short posts for the blog and the shop.', job: 'Posts twice a day', model: 'sonnet', effort: 'medium' },
     { id: 'r1', category: 'spend', position: 'marketing-lead', text: 'Buy a stock photo pack for the spring campaign (about 40 USD).', amount: 40, status: 'pending', decider: 'owner', at: now() - 1800, outside: false },
     { id: 'r0', category: 'publish', position: 'writer', text: 'Publish the weekly article.', amount: null, status: 'allowed', decider: 'lead', at: now() - 86400, outside: false },
   ],

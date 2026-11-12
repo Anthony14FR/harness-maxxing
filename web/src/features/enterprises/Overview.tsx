@@ -89,6 +89,52 @@ function positionTitle(e: Enterprise, id: string) {
   return e.positions.find((p) => p.id === id)?.title || id
 }
 
+/** What a hire request creates: every field the owner accepts, the role in a collapsible block. */
+function HireDetails({ request: r }: { request: EnterpriseRequest }) {
+  const t = useT()
+  const rows: [string, string | undefined][] = [
+    [t('ent.hireCard.title'), r.title],
+    [t('ent.hireCard.department'), r.department],
+    [t('ent.hireCard.reportsTo'), r.reports_to],
+    [t('ent.hireCard.topic'), r.topic],
+    [t('ent.hireCard.name'), r.name],
+    [t('ent.hireCard.model'), r.model],
+    [t('ent.hireCard.effort'), r.effort],
+  ]
+  return (
+    <div className="grid gap-2 rounded-lg bg-muted p-3 text-[13px]" data-testid="hire-details">
+      {r.outside && <p className="font-medium text-warning">{t('ent.hireCard.outside')}</p>}
+      <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1">
+        {rows.filter(([, v]) => v).map(([k, v]) => (
+          <React.Fragment key={k}>
+            <dt className="text-muted-foreground">{k}</dt>
+            <dd className="min-w-0 break-words">
+              <Sensitive length={10}>{v}</Sensitive>
+            </dd>
+          </React.Fragment>
+        ))}
+      </dl>
+      {r.job && (
+        <div>
+          <div className="text-muted-foreground">{t('ent.hireCard.job')}</div>
+          <p className="whitespace-pre-wrap">
+            <Sensitive length={30}>{r.job}</Sensitive>
+          </p>
+        </div>
+      )}
+      {r.role && (
+        <details data-testid="hire-role">
+          <summary className="cursor-pointer text-muted-foreground">{t('ent.hireCard.role')}</summary>
+          <p className="mt-1 whitespace-pre-wrap">
+            <Sensitive length={60}>{r.role}</Sensitive>
+          </p>
+        </details>
+      )}
+      <p className="text-xs text-muted-foreground">{t('ent.hireCard.protected')}</p>
+    </div>
+  )
+}
+
 /** A request for the owner's decision: Allow or Deny, with an optional reason. */
 export function RequestCard({ enterprise: e, request: r }: { enterprise: Enterprise; request: EnterpriseRequest }) {
   const t = useT()
@@ -110,6 +156,7 @@ export function RequestCard({ enterprise: e, request: r }: { enterprise: Enterpr
       <p className="text-sm whitespace-pre-wrap">
         <Sensitive length={30}>{r.text}</Sensitive>
       </p>
+      {r.category === 'hire' && <HireDetails request={r} />}
       <div className="flex flex-wrap items-center gap-2">
         <Input value={reason} onChange={(ev) => setReason(ev.target.value)} placeholder={t('ent.request.reason')} aria-label={t('ent.request.reason')} maxLength={300} className="min-w-0 flex-1 basis-48" autoComplete="off" />
         <Button size="sm" onClick={() => go('allow')} loading={decide.isPending && decide.variables?.decision === 'allow'} disabled={decide.isPending} data-testid="request-allow">

@@ -531,6 +531,8 @@ export type Position = {
   suggested_template?: string
   /** the position runs code from outside: its occupant must be protected and hold no key */
   untrusted_code?: boolean
+  /** why the occupant does not fit an untrusted_code position (not_sandboxed, holds_keys) */
+  untrusted_unfit?: string[]
   /** length of the whole note before the cap, and whether it was cut */
   note_chars?: number
   note_cut?: boolean
@@ -561,6 +563,7 @@ export type Enterprise = {
   ceiling_hit: boolean
   /** the server can run protected agents (needed by positions that run outside code) */
   sandbox_available?: boolean
+  settings_warnings?: string[]
   /** the members' daily budgets add up to more than the department's (department '' = the enterprise's) ceiling */
   budget_warnings?: EnterpriseBudgetWarning[]
 }
@@ -585,7 +588,7 @@ export type EnterpriseOverview = {
   digest_cost: number
 }
 export type EnterpriseReport = { name: string; date: string; kind: 'daily' | 'weekly' | 'monthly' }
-export type EnterpriseRequest = { id: string; category: string; position: string; text: string; amount: number | null; status: string; decider: string; at: number; outside: boolean }
+export type EnterpriseRequest = { id: string; category: string; position: string; text: string; amount: number | null; status: string; decider: string; at: number; outside: boolean; title?: string; department?: string; reports_to?: string; topic?: string; name?: string; role?: string; job?: string; model?: string; effort?: string }
 export type EnterpriseEscalation = { id: string; position: string; text: string; task: string; level: number; deadline: number; status: string; at: number; outside: boolean; to: string }
 export type EnterpriseAbout = { text: string; max: number; note_max: number }
 export type EnterpriseProfileProduct = { name?: string; price?: string; url?: string; [k: string]: unknown }

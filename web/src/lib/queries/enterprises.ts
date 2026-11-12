@@ -114,7 +114,7 @@ export function useHirePosition() {
     errorToast: false,
   })
 }
-/** Sets each member's daily budget of a department (or of the whole enterprise: department "") to its share of the ceiling. */
+/** Sets each member's daily budget of a department to its share of the ceiling. */
 export function useSplitBudget() {
   return useMut(({ id, department }: { id: string; department: string }) => api.post<{ agents: { path: string; usd_per_day: number }[]; enterprise: Enterprise }>(base(id, `/departments/${seg(department)}/split-budget`)), {
     invalidate: [entKeys.all, ['agents']],

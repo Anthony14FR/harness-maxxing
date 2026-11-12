@@ -57,6 +57,7 @@ const BLOCKED_REASONS: Record<string, TKey> = {
   envelope: 'ent.blocked.envelope',
   disabled: 'ent.blocked.disabled',
   'agent missing': 'ent.blocked.agentMissing',
+  untrusted_unfit: 'ent.blocked.untrustedUnfit',
 }
 
 /** What a position's state reads: a blocked one says why (known reasons translated, anything else as sent). */

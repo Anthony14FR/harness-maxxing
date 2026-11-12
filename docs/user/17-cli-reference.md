@@ -242,7 +242,7 @@ OAuth sign-ins (state "To connect") are done in Settings -> MCP -> **Connect**. 
 | `maxxing enterprise done TASK TEXT` / `block TASK TEXT` | from a position: hand in a task / report a blocker |
 | `maxxing enterprise escalate TEXT [--task T]` / `answer ID TEXT` | from a position: ask one level up / answer an escalation of a report |
 | `maxxing enterprise request CATEGORY TEXT [--amount N] [--position P --job TEXT\|--agent A]` / `decide ID allow\|deny [REASON]` | from a position: ask for something / decide a request of the team |
-| `maxxing enterprise request hire WHY --title T --department D --reports-to P --job TEXT --topic projects/<p>/topics/<t> --name N --role TEXT [--model M] [--effort low\|medium\|high\|xhigh\|max]` | from a position: ask the owner to create a position and hire its agent (done on Accept; `--title` and `--topic` required) |
+| `maxxing enterprise request hire WHY --title T --topic projects/<p>/topics/<t> [--department D] [--reports-to P] [--job TEXT] [--name N] [--role TEXT] [--model M] [--effort low\|medium\|high\|xhigh\|max]` | from a position: ask the owner to create a position and hire its agent (done on Accept; `--title` and `--topic` required) |
 | `maxxing enterprise review TASK approve\|changes [NOTES]` | from the reviewer position (setting `review_by`): approve a hand-in or send it back (notes required for `changes`) |
 | `maxxing enterprise meeting start TOPIC --with P1,P2 [--hours H]` / `reply ID TEXT` | from a lead (or the owner): ask positions of its branch for their view (the top may invite any; closes after 4 h by default); an invited position answers once, the organizer gets the minutes |
 | `maxxing enterprise objective set ID VALUE` | from a position: the value of an objective it owns |

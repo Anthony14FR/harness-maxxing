@@ -217,6 +217,23 @@ export function EnterpriseSettings({ enterprise: e }: { enterprise: Enterprise }
             <SettingRow label={t('ent.settings.topDecides')} description={d.top === OWNER ? t('ent.settings.topDecidesNoTop') : t('ent.settings.topDecidesDesc')} htmlFor="ent-top-decides">
               <Switch id="ent-top-decides" checked={d.topDecides && d.top !== OWNER} disabled={d.top === OWNER} onCheckedChange={(v) => set('topDecides', v)} data-testid="top-decides" />
             </SettingRow>
+            {d.topDecides && d.top !== OWNER && (!d.trust || (e.settings_warnings || []).includes('top_decides_needs_trust_chain')) && (
+              <div className="py-4" data-testid="top-decides-warning">
+                <Callout
+                  tone="warning"
+                  title={t('ent.settings.topDecidesTrustTitle')}
+                  action={
+                    !d.trust ? (
+                      <Button type="button" size="sm" variant="outline" onClick={() => set('trust', true)} data-testid="top-decides-trust-on">
+                        {t('ent.settings.topDecidesTrustOn')}
+                      </Button>
+                    ) : undefined
+                  }
+                >
+                  <p>{t('ent.settings.topDecidesTrustBody')}</p>
+                </Callout>
+              </div>
+            )}
             {d.topDecides && d.top !== OWNER && (
               <div className="py-4">
                 <Callout tone="info" title={t('ent.settings.topDecidesKeeps')}>
