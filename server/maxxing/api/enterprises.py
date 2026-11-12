@@ -57,12 +57,17 @@ class PositionIn(BaseModel):
     job: Optional[str] = Field(None, max_length=enterprises.JOB_MAX)
     worker_template: Optional[dict[str, Any]] = None
     desk: Optional[bool] = None
+    untrusted_code: Optional[bool] = None               # the position runs code from outside: sandboxed occupant, no key
+    link_project: Optional[bool] = None                 # seat: link the agent's project to the enterprise first
 
 
 class HireIn(BaseModel):
     topic: str = Field(max_length=200)
-    name: Optional[str] = Field(None, max_length=48)
+    name: Optional[str] = Field(None, max_length=60)    # the agent's display name
     template: Optional[str] = Field(None, max_length=64)
+    role: Optional[str] = Field(None, max_length=enterprises.JOB_MAX * 4)   # its CLAUDE.md text
+    model: Optional[str] = Field(None, max_length=80)
+    effort: Optional[str] = Field(None, max_length=8)
 
 
 def _given(body: BaseModel, skip: tuple[str, ...] = ()) -> dict:
@@ -187,8 +192,18 @@ def remove_position(e: str, pos: str, reparent_to: Optional[str] = Query(None, m
 def hire(e: str, pos: str, body: HireIn):
     _on()
     try:
-        path = enterprises.hire(e, pos, body.topic, body.name, body.template)
+        path = enterprises.hire_custom(e, pos, body.topic, name=body.name, role=body.role, model=body.model,
+                                       effort=body.effort, template=body.template)
         return {"agent": path, "enterprise": enterprises.get(e)}
+    except (enterprises.EnterpriseError, agents.AgentError) as x:
+        raise _bad(x) from None
+
+
+@router.post("/{e}/departments/{d}/split-budget")
+def split_budget(e: str, d: str):
+    _on()
+    try:
+        return enterprises.split_budget(e, d)
     except (enterprises.EnterpriseError, agents.AgentError) as x:
         raise _bad(x) from None
 

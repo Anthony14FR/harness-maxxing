@@ -70,6 +70,7 @@ _OLD_AVATAR = {
 }
 PERMISSION_MODES = ("bypass", "acceptEdits", "default")
 FEED_LEVELS = ("info", "success", "warning", "error")   # feed.LEVELS
+EFFORTS = ("", "low", "medium", "high", "xhigh", "max")
 LIMITS = {  # name: (default, min, max)
     "usd_per_day": (2.0, 0.0, 1000.0),        # 0 = no budget
     "runs_per_hour": (6, 0, 120),              # 0 = no limit
@@ -510,6 +511,11 @@ def clean(data: Any, strict: bool = False) -> dict:
         if strict:
             raise AgentError(400, "bad_model", "Unknown model name")
         chat_model = ""
+    effort = str(d.get("effort") or "").strip()
+    if effort not in EFFORTS:
+        if strict:
+            raise AgentError(400, "bad_effort", "effort: low, medium, high, xhigh, max or empty")
+        effort = ""
     return {"version": 1, "name": name, "avatar": _clean_avatar(d.get("avatar"), name or "agent"),
             "enabled": d.get("enabled") is not False, "model": model, "permission_mode": mode,
             "allowed_tools": _clean_tools(d.get("allowed_tools")), "disallowed_tools": _clean_tools(d.get("disallowed_tools")),
@@ -524,6 +530,8 @@ def clean(data: Any, strict: bool = False) -> dict:
             "subagent": bool(d.get("subagent")), "mail": _clean_mail(d.get("mail"), strict),
             # chat_model: the model of the owner's conversation ("" = `model`)
             "chat_model": chat_model,
+            # effort: `claude --effort` of its runs ("" = the model's default)
+            "effort": effort,
             "limits": limits, "triggers": triggers,
             "created": c if isinstance(c := d.get("created"), (int, float)) and math.isfinite(c) else time.time()}
 
@@ -715,7 +723,12 @@ def run_settings(path: str, outside: bool = False, session: str | None = None, g
             args += ["--max-budget-usd", f"{left:.2f}"]
     from . import agent_guard
     args += agent_guard.add_dirs(path, a)
-    if desk:                                            # approvals off: what is not allowed below is denied, never asked
+    if a["effort"]:
+        args += ["--effort", a["effort"]]
+    if not desk:                                        # the enterprise's shared keys (inside its envelopes), never for a visitor's turn
+        from . import enterprises
+        a = {**a, "keys": list(dict.fromkeys([*a["keys"], *enterprises.shared_keys_for(path)]))}
+    if desk:                                          # approvals off: what is not allowed below is denied, never asked
         st = agent_guard.settings(path, a, approvals=True)
         pre = st.setdefault("hooks", {}).setdefault("PreToolUse", [])      # deny by hook: holds whatever is pre-approved
         pre.append({"matcher": "*", "hooks": [{"type": "command", "command": agent_guard.desk_hook_command(), "timeout": 10}]})
@@ -1085,7 +1098,7 @@ def public(path: str, stats: dict | None = None) -> dict:
             "description": workspace.read_description(folder(path)), **{k: a[k] for k in (
                 "avatar", "enabled", "model", "permission_mode", "allowed_tools", "disallowed_tools", "telegram",
                 "silent", "approvals", "trust_outside", "keys", "sandbox", "domains", "writable", "rules", "subagent",
-                "chat_model", "mail", "limits", "triggers", "created")}, "broken": bool(a.get("broken")),
+                "chat_model", "effort", "mail", "limits", "triggers", "created")}, "broken": bool(a.get("broken")),
             "session_count": st.get("sessions", 0), "archived_count": st.get("archived", 0),
             "running": st.get("running", 0), "unread": 0 if a["silent"] else st.get("unread", 0)}
 

@@ -100,6 +100,7 @@ class AgentIn(BaseModel):
     rules: Optional[list[Rule]] = Field(default=None, max_length=20)
     subagent: Optional[bool] = None
     chat_model: Optional[str] = Field(default=None, max_length=80)   # its model ("" = model)
+    effort: Optional[Literal["", "low", "medium", "high", "xhigh", "max"]] = None   # claude --effort ("" = default)
     mail: Optional[list[dict]] = Field(default=None, max_length=10)    # mailboxes of the E-mail page (mail/access.py)
 
 

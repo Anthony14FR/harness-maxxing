@@ -151,6 +151,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "escalation_timeout_h": 4,
     "digest": {"enabled": False, "hour": 8, "per_lead": False, "titles_only": False},
     "weekly": False, "monthly": False,
+    "top_decides": False, "shared_keys": [], "review_by": "",
     "desk": {"enabled": False, "label": "", "retention_days": 30,
              "public": {"enabled": False, "token": "", "rate_per_hour": 20, "max_chars": 1000}},
     "limits": {"depth": 4, "reports": 8, "workers_live": 5, "hops_per_task": 6},
@@ -162,6 +163,7 @@ _CHECKS: dict[str, Callable[[Any], Any]] = {
     "digest": _group({"enabled": _bool, "hour": lambda v: _int(v, 0, 23), "per_lead": _bool, "titles_only": _bool},
                      DEFAULT_SETTINGS["digest"]),
     "weekly": _bool, "monthly": _bool,
+    "top_decides": _bool, "shared_keys": lambda v: _names(v) or [], "review_by": lambda v: _review_by(v),
     "desk": _group({"enabled": _bool, "label": lambda v: _text(v, 60), "retention_days": lambda v: _int(v, 1, 365),
                     "public": _group({"enabled": _bool, "token": _token, "rate_per_hour": lambda v: _int(v, 1, 600),
                                       "max_chars": lambda v: _int(v, 50, 4000)},
@@ -170,6 +172,15 @@ _CHECKS: dict[str, Callable[[Any], Any]] = {
                       "workers_live": lambda v: _int(v, 0, 50), "hops_per_task": lambda v: _int(v, 1, 20)},
                      DEFAULT_SETTINGS["limits"]),
 }
+
+
+def _review_by(v: Any) -> str:
+    """The reviewer's position id, or "" (existence is checked on write, where the chart is known)."""
+    if v in (None, ""):
+        return ""
+    if not _slug_ok(v):
+        raise ValueError("review_by")
+    return v
 
 
 def _settings(src: Any, strict: bool = False, partial: bool = False) -> dict:
@@ -328,7 +339,8 @@ def _position(p: Any) -> dict | None:
         "id": p["id"], "title": _text(p.get("title"), TITLE_MAX) or p["id"], "reports_to": rt if _slug_ok(rt) else None,
         "department": dept if _slug_ok(dept) else "",
         "agent": p["agent"].strip("/") if isinstance(p.get("agent"), str) and p["agent"].strip("/") else None,
-        "job": _text(p.get("job"), JOB_MAX), "desk": p.get("desk") is True}
+        "job": _text(p.get("job"), JOB_MAX), "desk": p.get("desk") is True,
+        "untrusted_code": p.get("untrusted_code") is True}
     w = _worker(p.get("worker_template"))
     if w:
         out["worker_template"] = w
@@ -600,13 +612,42 @@ def _check_tree(d: dict) -> None:
             raise EnterpriseError(400, "too_many_reports", f"{lead!r} has more than {lim['reports']} reports")
 
 
-def _check_agent(d: dict, slug: str, path: Any, pos: str) -> str:
+def _unfit(path: str) -> list[str]:
+    """Why an agent cannot run code from outside: [not_sandboxed, holds_keys] (empty = fit)."""
+    try:
+        a = agents.load(path)
+    except Exception:  # noqa: BLE001 - an unreadable agent is not fit
+        return ["not_sandboxed"]
+    return (["not_sandboxed"] if not a["sandbox"] else []) + (["holds_keys"] if a["keys"] else [])
+
+
+def untrusted_unfit(slug: str, pos: str) -> list[str]:
+    """The reasons the occupant of an `untrusted_code` position is unfit (empty: fit, vacant or not flagged). Never raises."""
+    try:
+        p = position(slug, pos)
+        if not p or not p.get("untrusted_code") or not p["agent"] or not agents.exists(p["agent"]):
+            return []
+        return _unfit(p["agent"])
+    except Exception:  # noqa: BLE001
+        logger.exception("untrusted check of %s/%s", slug, pos)
+        return []
+
+
+def _check_agent(d: dict, slug: str, path: Any, pos: str, link: bool = False) -> str:
     ap = agents.parse(path) if isinstance(path, str) else None
-    if not ap or ap[0] not in d["projects"] or not agents.exists(path):
+    if not ap or not agents.exists(path):
         raise EnterpriseError(400, "bad_agent", f"{path!r} is not an agent of a project of this enterprise")
+    if ap[0] not in d["projects"]:
+        if not link:
+            raise EnterpriseError(409, "project_not_linked", f"The project {ap[0]!r} is not linked to this enterprise",
+                                  project=ap[0])
+        d["projects"] = _check_projects([*d["projects"], ap[0]], slug)
     seat = seat_of(path)
     if seat and seat != (slug, pos):
         raise EnterpriseError(409, "agent_seated", f"{path!r} already holds the position {seat[1]!r} ({seat[0]})")
+    if _find(d, pos).get("untrusted_code") and (why := _unfit(path)):
+        raise EnterpriseError(400, "untrusted_unfit", f"{path!r} cannot run code from outside: " + ", ".join(why),
+                              reasons=why)
     return path
 
 
@@ -703,6 +744,9 @@ def update(slug: str, fields: dict) -> dict:
                 raise EnterpriseError(400, "invalid", "settings: an object")
             was_live = bool(d["settings"]["desk"].get("enabled"))
             d["settings"] = _settings(_merge(d["settings"], f["settings"]), strict=True)
+            rb = d["settings"]["review_by"]
+            if rb and not any(p["id"] == rb for p in d["positions"]):
+                raise EnterpriseError(400, "bad_position", f"review_by: the position {rb!r} does not exist")
             if d["settings"]["desk"]["enabled"] and not was_live:      # the front desk goes live: every occupant protected
                 from . import enterprise_desk
                 enterprise_desk.check_live(slug, d)
@@ -865,6 +909,7 @@ def get(slug: str, with_state: bool = True) -> dict:
     d = load(slug)
     out = {**d, "id": slug, "name": d["name"] or slug, "broken": bool(d.get("broken"))}
     out["cost_today"], out["ceiling_hit"] = 0.0, False
+    out["sandbox_available"], out["budget_warnings"] = _sandbox_available(), []
     if d.get("broken"):
         return out
     positions = [dict(p) for p in d["positions"]]
@@ -873,6 +918,12 @@ def get(slug: str, with_state: bool = True) -> dict:
         tasks = _open_tasks(slug)
         waits = _waits(slug)
         total, paid = 0.0, set()
+        limits: dict[str, float] = {}
+        try:
+            from . import enterprise_knowledge
+            about_text: str | None = enterprise_knowledge._read_text(folder(slug) / enterprise_knowledge.ABOUT_FILE)
+        except Exception:  # noqa: BLE001
+            enterprise_knowledge, about_text = None, None
         for p in positions:
             path, occupant, st, cost = p["agent"], None, {}, 0.0
             if path and agents.exists(path):
@@ -883,6 +934,7 @@ def get(slug: str, with_state: bool = True) -> dict:
                     metas = by.get(path, [])
                     st = agents.status(path, metas)
                     cost = float(st.get("cost_today") or 0)
+                    limits[path] = float(a["limits"]["usd_per_day"] or 0)
                 except Exception:  # noqa: BLE001 - one unreadable agent must not hide the chart
                     logger.exception("position %s/%s: occupant unreadable", slug, p["id"])
                 if path not in paid:
@@ -900,11 +952,90 @@ def get(slug: str, with_state: bool = True) -> dict:
             p.update(state=state, occupant=occupant, cost_today=round(cost, 4), inbox=_inbox_count(slug, p["id"]),
                      open_tasks=tasks.get(p["id"], 0),
                      blocked_reason="agent missing" if path and occupant is None else why)
+            p["note_chars"], p["note_cut"] = (enterprise_knowledge.note_size(slug, p["id"], d, about_text)
+                                              if enterprise_knowledge else (0, False))
         out["cost_today"] = round(total, 4)
         cap = float(d["envelope"].get("usd_per_day") or 0)
         out["ceiling_hit"] = bool(cap and total >= cap)
+        out["budget_warnings"] = _budget_warnings(d, positions, limits)
     out["positions"] = positions
     return out
+
+
+def _sandbox_available() -> bool:
+    """Whether this server can run protected (sandboxed) agents."""
+    try:
+        from . import agent_guard
+        return bool(agent_guard.available()["ok"])
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _budget_warnings(d: dict, positions: list[dict], limits: dict[str, float]) -> list[dict]:
+    """[{department, sum, ceiling, agents}] where the members' daily budgets add up to more than the ceiling
+    (department "" = the enterprise envelope)."""
+    def over(dept: str, members: list[str], ceiling: float) -> dict | None:
+        paths = list(dict.fromkeys(m for m in members if m in limits))
+        total = round(sum(limits[m] for m in paths), 4)
+        return {"department": dept, "sum": total, "ceiling": ceiling, "agents": paths} if ceiling > 0 and total > ceiling else None
+
+    out = []
+    for dept, row in d["departments"].items():
+        w = over(dept, [p["agent"] for p in positions if p["department"] == dept and p["agent"]],
+                 float((row.get("envelope") or {}).get("usd_per_day") or 0))
+        if w:
+            out.append(w)
+    w = over("", [p["agent"] for p in positions if p["agent"]], float(d["envelope"].get("usd_per_day") or 0))
+    return out + ([w] if w else [])
+
+
+SPLIT_STEP = 0.05
+
+
+def split_budget(slug: str, dept: str) -> dict:
+    """Give each member agent of a department an equal share of its ceiling (rounded down to 0.05 USD a day)."""
+    d = _load_ok(slug)
+    row = d["departments"].get(dept)
+    if row is None:
+        raise EnterpriseError(404, "not_found", f"Department {dept!r} not found")
+    ceiling = float((row.get("envelope") or {}).get("usd_per_day") or 0)
+    if ceiling <= 0:
+        raise EnterpriseError(400, "no_ceiling", f"The department {dept!r} has no daily ceiling to split")
+    paths = list(dict.fromkeys(p["agent"] for p in d["positions"]
+                               if p["department"] == dept and p["agent"] and agents.exists(p["agent"])))
+    if not paths:
+        raise EnterpriseError(400, "no_members", f"The department {dept!r} has no seated agent")
+    share = round(int(ceiling / len(paths) / SPLIT_STEP + 1e-9) * SPLIT_STEP, 2)
+    if share <= 0:
+        raise EnterpriseError(400, "ceiling_too_low", "The ceiling is too low to give each member a budget")
+    done = []
+    for path in paths:                                  # no enterprises lock held: agents.update takes the agents lock
+        agents.update(path, {"limits": {"usd_per_day": share}})
+        done.append({"path": path, "usd_per_day": share})
+    log(slug, "structure", f"Department {dept}: the ceiling split, {share} USD a day for each of {len(paths)} agent(s)")
+    return {"agents": done, "enterprise": get(slug)}
+
+
+def shared_keys_for(path: str) -> list[str]:
+    """The vault keys the enterprise gives its occupant on top of its own, kept inside the department / enterprise
+    key envelopes; none for a position that runs code from outside. Never raises."""
+    try:
+        if not feature_on():
+            return []
+        seat = seat_of(path)
+        d = _index()["by"].get(seat[0]) if seat else None
+        pos = position(*seat) if seat else None
+        if not d or not pos or pos.get("untrusted_code"):
+            return []
+        keys = list(d["settings"].get("shared_keys") or [])
+        dept = (d["departments"].get(pos["department"]) or {}) if pos["department"] else {}
+        for env in ((dept.get("envelope") or {}), (d.get("envelope") or {})):
+            if isinstance(env.get("keys"), list):
+                keys = [k for k in keys if k in env["keys"]]
+        return keys
+    except Exception:  # noqa: BLE001
+        logger.exception("shared keys of %s", path)
+        return []
 
 
 # ---- projects ---------------------------------------------------------------------------------------------
@@ -966,6 +1097,8 @@ def _fields(f: dict) -> dict:
         out["department"] = dept or ""
     if "desk" in f:
         out["desk"] = bool(f["desk"])
+    if "untrusted_code" in f:
+        out["untrusted_code"] = bool(f["untrusted_code"])
     if "worker_template" in f:
         out["worker_template"] = _worker(f["worker_template"])
     return out
@@ -988,12 +1121,12 @@ def add_position(slug: str, fields: dict) -> dict:
         extra = _fields(f)
         p = {"id": pid, "title": extra.get("title") or pid, "reports_to": _reports_to(d, f.get("reports_to"), pid),
              "department": extra.get("department", ""), "agent": None, "job": extra.get("job", ""),
-             "desk": extra.get("desk", False)}
+             "desk": extra.get("desk", False), "untrusted_code": extra.get("untrusted_code", False)}
         if extra.get("worker_template"):
             p["worker_template"] = extra["worker_template"]
-        if f.get("agent"):
-            p["agent"] = _check_agent(d, slug, f["agent"], pid)
         d["positions"].append(p)
+        if f.get("agent"):
+            p["agent"] = _check_agent(d, slug, f["agent"], pid, bool(f.get("link_project")))
         return p
 
     _apply(slug, edit, lambda d, p: f"Position {p['id']} added" + (f" under {p['reports_to']}" if p["reports_to"] else "")
@@ -1023,7 +1156,7 @@ def update_position(slug: str, pos: str, fields: dict, rev: int | None = None) -
             p["reports_to"] = new
             notes.append(f"moved under {new or 'the top'}")
         if seat:
-            p["agent"] = _check_agent(d, slug, f["agent"], pos) if f["agent"] else None
+            p["agent"] = _check_agent(d, slug, f["agent"], pos, bool(f.get("link_project"))) if f["agent"] else None
             notes.append(f"held by {p['agent']}" if p["agent"] else "vacated")
         return notes
 
@@ -1060,6 +1193,8 @@ def remove_position(slug: str, pos: str, reparent_to: str | None = None) -> dict
         d["positions"].remove(p)
         if d["top"] == pos:
             d["top"] = "owner"
+        if d["settings"].get("review_by") == pos:
+            d["settings"]["review_by"] = ""
         return len(reports), new or ""
 
     _, (_n, heir) = _apply(slug, edit, lambda d, res: f"Position {pos} removed" + (f", {res[0]} report(s) moved" if res[0] else ""))
@@ -1090,6 +1225,15 @@ def _reassign_requester(slug: str, pos: str, heir: str) -> None:
 def hire(slug: str, pos: str, topic: str, name: str | None = None, template: str | None = None) -> str:
     """Create the agent of a vacant position in a topic of a linked project and seat it. -> its path.
     `template` (an agent template id; "" = none; default: the position's `suggested_template`) gives the settings; the role stays the job."""
+    return hire_custom(slug, pos, topic, template=template, agent_name=name)
+
+
+def hire_custom(slug: str, pos: str, topic: str, *, name: str | None = None, role: str | None = None,
+                model: str | None = None, effort: str | None = None, template: str | None = None,
+                agent_name: str | None = None) -> str:
+    """hire() with the owner's choices: `name` (display name; the folder name is its slug, else the position id),
+    `role` (the CLAUDE.md text; default title + job), `model`, `effort`. A position that runs code from outside gets a
+    sandboxed agent without key. -> the path."""
     d = _load_ok(slug)
     p = _find(d, pos)
     m = TOPIC_RE.match((topic or "").strip("/"))
@@ -1097,7 +1241,8 @@ def hire(slug: str, pos: str, topic: str, name: str | None = None, template: str
         raise EnterpriseError(400, "bad_project", "The topic must belong to a project of this enterprise")
     if p["agent"] and agents.exists(p["agent"]):
         raise EnterpriseError(409, "not_vacant", f"The position {pos!r} already has an occupant")
-    role = (p["title"] + ("\n\n" + p["job"] if p["job"] else "")).strip()
+    role = (role if isinstance(role, str) and role.strip() else
+            (p["title"] + ("\n\n" + p["job"] if p["job"] else ""))).strip()
     fields: dict[str, Any] = {}
     tid = template if template is not None else (p.get("suggested_template") or "")
     if tid:
@@ -1109,7 +1254,17 @@ def hire(slug: str, pos: str, topic: str, name: str | None = None, template: str
         else:
             fields = agent_templates.fields(tpl, [x["name"] for x in vault.list_secrets()])
             fields.pop("name", None)
-    created = agents.create(topic.strip("/"), name or pos, {**fields, "description": role})
+    if name and name.strip():
+        fields["name"] = name.strip()
+    if model:
+        fields["model"] = model
+    if effort:
+        fields["effort"] = effort
+    if p.get("untrusted_code"):
+        fields.update(sandbox=True, keys=[])
+    slug_name = agent_name or (re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")[:48] if name else "")
+    created = agents.create(topic.strip("/"), agent_name or (slug_name if SLUG_RE.match(slug_name or "") else pos),
+                            {**fields, "description": role})
     path = created["path"]
     update_position(slug, pos, {"agent": path}, rev=load(slug)["rev"])
     return path

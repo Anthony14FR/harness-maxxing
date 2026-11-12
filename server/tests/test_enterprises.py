@@ -218,7 +218,11 @@ def test_agent_of_an_unlinked_project_is_bad_agent(client, ent):
     assert client.post("/api/workspace/projects", json={"name": "zeta"}).status_code == 200
     assert client.post("/api/workspace/projects/zeta/topics", json={"name": "news"}).status_code == 200
     z = _agent(client, "projects/zeta/topics/news", "anchor")
-    _err(_pos(client, "x", agent=z), 400, "bad_agent")
+    r = _pos(client, "x", agent=z)
+    _err(r, 409, "project_not_linked")
+    assert r.json()["project"] == "zeta"
+    assert _pos(client, "x", agent=z, link_project=True).status_code == 200
+    assert _chart(client)["projects"] == ["acme", "zeta"]
 
 
 def test_agent_holds_one_position(client, ent):
@@ -690,3 +694,110 @@ def test_note_unused_ceiling_fields_roundtrip(client, ent):
     c = r.json()
     assert [o["id"] for o in c["objectives"]] == ["o1"] and c["objectives"][0]["target"] == 10
     assert c["grants"][0]["ceiling"] == 5 and c["grants"][0]["until"] == until
+
+
+# ---- settings, untrusted code, notes, budgets, hire options, shared keys, effort ---------------------------
+def test_new_settings_and_review_by(client, ent):
+    st = _chart(client)["settings"]
+    assert st["top_decides"] is False and st["shared_keys"] == [] and st["review_by"] == ""
+    _pos(client, "lead")
+    r = client.patch(f"{E}/acme-group", json={"settings": {"top_decides": True, "shared_keys": ["GH_TOKEN"], "review_by": "lead"}})
+    assert r.status_code == 200, r.text
+    assert r.json()["settings"]["top_decides"] is True and r.json()["settings"]["shared_keys"] == ["GH_TOKEN"]
+    _err(client.patch(f"{E}/acme-group", json={"settings": {"review_by": "ghost"}}), 400, "bad_position")
+    _err(client.patch(f"{E}/acme-group", json={"settings": {"top_decides": "yes"}}), 400, "invalid")
+    assert client.delete(f"{E}/acme-group/positions/lead").json()["settings"]["review_by"] == ""
+
+
+def test_untrusted_code_seat_check(client, ent, topic):
+    _pos(client, "builder", untrusted_code=True)
+    assert _chart(client)["positions"][0]["untrusted_code"] is True
+    r = _pos(client, "b2", untrusted_code=True, agent=W)
+    _err(r, 400, "untrusted_unfit")
+    assert r.json()["reasons"] == ["not_sandboxed"]
+    agents.update(W, {"sandbox": True, "keys": ["K1"]})
+    r = _pos(client, "b2", untrusted_code=True, agent=W)
+    assert r.json()["reasons"] == ["holds_keys"] if r.status_code == 400 else False
+    agents.update(W, {"keys": []})
+    assert _pos(client, "b2", untrusted_code=True, agent=W).status_code == 200
+    assert enterprises.untrusted_unfit("acme-group", "b2") == []
+    agents.update(W, {"sandbox": False})
+    assert enterprises.untrusted_unfit("acme-group", "b2") == ["not_sandboxed"]
+    assert enterprises.untrusted_unfit("acme-group", "builder") == []
+
+
+def test_hire_into_an_untrusted_position_is_sandboxed(client, ent, topic):
+    _pos(client, "builder", title="Builder", untrusted_code=True)
+    r = client.post(f"{E}/acme-group/positions/builder/hire", json={"topic": topic})
+    assert r.status_code == 200, r.text
+    a = agents.get(r.json()["agent"])
+    assert a["sandbox"] is True and a["keys"] == []
+
+
+def test_note_size_sandbox_and_payload_additions(client, ent, mx):
+    _pos(client, "head", title="Head", job="x" * 1500)
+    (mx["ws"] / "enterprises" / "acme-group" / "CLAUDE.md").write_text("About us. " * 400, encoding="utf-8")
+    c = _chart(client)
+    p = c["positions"][0]
+    assert p["note_chars"] > 3000 and p["note_cut"] is True
+    assert c["sandbox_available"] is True and c["budget_warnings"] == []
+
+
+def test_budget_warnings_and_split(client, ent):
+    _pos(client, "a", department="ops", agent=W)
+    _pos(client, "b", department="ops", agent=R)
+    assert client.patch(f"{E}/acme-group", json={"departments": {"ops": {"name": "Ops", "envelope": {"usd_per_day": 3}}}}).status_code == 200
+    for path in (W, R):
+        agents.update(path, {"limits": {"usd_per_day": 2}})
+    w = _chart(client)["budget_warnings"]
+    assert w == [{"department": "ops", "sum": 4.0, "ceiling": 3.0, "agents": [W, R]}]
+    r = client.post(f"{E}/acme-group/departments/ops/split-budget")
+    assert r.status_code == 200, r.text
+    assert r.json()["agents"] == [{"path": W, "usd_per_day": 1.5}, {"path": R, "usd_per_day": 1.5}]
+    assert agents.load(W)["limits"]["usd_per_day"] == 1.5
+    assert r.json()["enterprise"]["budget_warnings"] == []
+    _err(client.post(f"{E}/acme-group/departments/ghost/split-budget"), 404, "not_found")
+    assert client.patch(f"{E}/acme-group", json={"departments": {"ops": {"name": "Ops", "envelope": {"usd_per_day": 0.07}}}}).status_code == 200
+    _err(client.post(f"{E}/acme-group/departments/ops/split-budget"), 400, "ceiling_too_low")
+
+
+def test_hire_with_name_role_model_effort(client, ent, topic):
+    _pos(client, "head", title="Head of blog", job="Runs the blog.")
+    r = client.post(f"{E}/acme-group/positions/head/hire",
+                    json={"topic": topic, "name": "Ada Writer", "role": "You write well.", "model": "sonnet", "effort": "high"})
+    assert r.status_code == 200, r.text
+    a = agents.get(r.json()["agent"])
+    assert r.json()["agent"].endswith("/ada-writer") and a["display_name"] == "Ada Writer"
+    assert a["model"] == "sonnet" and a["effort"] == "high" and a["description"].strip() == "You write well."
+    _pos(client, "two")
+    _err(client.post(f"{E}/acme-group/positions/two/hire", json={"topic": topic, "effort": "huge"}), 400, "bad_effort")
+
+
+def test_shared_keys_reach_runs_inside_envelopes(client, ent):
+    _pos(client, "a", agent=W)
+    _pos(client, "u", agent=R, untrusted_code=False)
+    agents.update(W, {"keys": ["OWN"]})
+    assert client.patch(f"{E}/acme-group", json={"settings": {"shared_keys": ["S1", "S2"]}}).status_code == 200
+    assert agents.run_settings(W)["keys"] == ["OWN", "S1", "S2"]
+    assert client.patch(f"{E}/acme-group", json={"envelope": {"keys": ["OWN", "S1"]}}).status_code == 200
+    assert agents.run_settings(W)["keys"] == ["OWN", "S1"]
+    rev = _chart(client)["rev"]
+    assert client.patch(f"{E}/acme-group/positions/u", json={"untrusted_code": True}).status_code == 200
+    assert agents.run_settings(R)["keys"] == []
+    assert rev
+
+
+def test_agent_effort_field(client, topic):
+    _on(client)
+    path = _agent(client, topic, "thinker")
+    assert agents.get(path)["effort"] == ""
+    assert "--effort" not in agents.run_settings(path)["args"]
+    agents.update(path, {"effort": "xhigh"})
+    args = agents.run_settings(path)["args"]
+    assert args[args.index("--effort") + 1] == "xhigh"
+    with pytest.raises(agents.AgentError):
+        agents.update(path, {"effort": "nope"})
+    r = client.patch("/api/agents/" + path.replace("projects/", "").replace("/topics/", "/").replace("/agents/", "/"),
+                     json={"effort": "low"})
+    assert r.status_code == 200 and r.json()["effort"] == "low"
+
