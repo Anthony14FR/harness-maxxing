@@ -152,7 +152,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "escalation_timeout_h": 4,
     "digest": {"enabled": False, "hour": 8, "per_lead": False, "titles_only": False},
     "weekly": False, "monthly": False,
-    "top_decides": False, "shared_keys": [], "review_by": "", "zero_intervention": False,
+    "top_decides": False, "shared_keys": [], "review_by": "", "zero_intervention": False, "stale_h": None,
     "desk": {"enabled": False, "label": "", "retention_days": 30,
              "public": {"enabled": False, "token": "", "rate_per_hour": 20, "max_chars": 1000}},
     "limits": {"depth": 4, "reports": 8, "workers_live": 5, "hops_per_task": 6},
@@ -164,7 +164,8 @@ _CHECKS: dict[str, Callable[[Any], Any]] = {
     "digest": _group({"enabled": _bool, "hour": lambda v: _int(v, 0, 23), "per_lead": _bool, "titles_only": _bool},
                      DEFAULT_SETTINGS["digest"]),
     "weekly": _bool, "monthly": _bool,
-    "top_decides": _bool, "zero_intervention": _bool, "shared_keys": lambda v: _names(v) or [], "review_by": lambda v: _review_by(v),
+    "top_decides": _bool, "zero_intervention": _bool, "stale_h": lambda v: None if v is None else _int(v, 0, 168),
+    "shared_keys": lambda v: _names(v) or [], "review_by": lambda v: _review_by(v),
     "desk": _group({"enabled": _bool, "label": lambda v: _text(v, 60), "retention_days": lambda v: _int(v, 1, 365),
                     "public": _group({"enabled": _bool, "token": _token, "rate_per_hour": lambda v: _int(v, 1, 600),
                                       "max_chars": lambda v: _int(v, 50, 4000)},
@@ -744,9 +745,12 @@ _UPDATABLE = ("name", "emoji", "top", "settings", "envelope", "departments", "ob
 def update(slug: str, fields: dict) -> dict:
     f = {k: v for k, v in (fields or {}).items() if k in _UPDATABLE}
     grants_log: list[str] = []
+    zero_lost: list[bool] = []
 
     def edit(d: dict) -> list[str]:
         grants_log.clear()
+        zero_lost.clear()
+        was_zero = bool(d["settings"].get("zero_intervention"))
         if "name" in f:
             name = _text(f["name"], NAME_MAX)
             if not name:
@@ -791,10 +795,15 @@ def update(slug: str, fields: dict) -> dict:
             if f["top"] == "owner":
                 d["settings"]["top_decides"] = False     # a setting about the top never lands on the next one
         if d["settings"].get("zero_intervention") and d["top"] == "owner":
-            raise EnterpriseError(400, "needs_top", "Total autonomy needs a top position (the CEO has the last word)")
+            if not was_zero:
+                raise EnterpriseError(400, "needs_top", "Total autonomy needs a top position (the CEO has the last word)")
+            d["settings"]["zero_intervention"] = False      # the top went away: never stuck in a mode nobody can lead
+            zero_lost.append(True)
         return sorted(f)
 
     _apply(slug, edit, lambda d, keys: "Updated " + ", ".join(keys))
+    if zero_lost:
+        _zero_lost(slug)
     if "settings" in f or "top" in f:
         _release_top(slug)
         _release_reviews(slug)
@@ -934,6 +943,11 @@ def get(slug: str, with_state: bool = True) -> dict:
     out["sandbox_available"], out["budget_warnings"] = _sandbox_available(), []
     st = d.get("settings") or {}
     out["effective"] = {k: (v if st.get("zero_intervention") else st.get(k)) for k, v in ZERO_FORCED.items()}
+    try:
+        from . import enterprise_flow
+        out["effective"]["stale_h"] = enterprise_flow.stale_hours(slug)      # hours without movement before a follow-up (0 = off)
+    except Exception:  # noqa: BLE001
+        out["effective"]["stale_h"] = 0
     out["settings_warnings"] = ["top_decides_needs_trust_chain"] if st.get("top_decides") and not st.get("trust_chain") else []
     if d.get("broken"):
         return out
@@ -1161,8 +1175,10 @@ def add_position(slug: str, fields: dict) -> dict:
 
 def update_position(slug: str, pos: str, fields: dict, rev: int | None = None) -> dict:
     f = dict(fields or {})
+    zero_lost: list[bool] = []
 
     def edit(d: dict) -> list[str]:
+        zero_lost.clear()
         p = _find(d, pos)
         notes: list[str] = []
         move = "reports_to" in f and _reports_to(d, f["reports_to"], pos) != p["reports_to"]
@@ -1179,6 +1195,9 @@ def update_position(slug: str, pos: str, fields: dict, rev: int | None = None) -
             if p["id"] == d["top"] and new is not None:
                 d["top"] = "owner"
                 d["settings"]["top_decides"] = False
+                if d["settings"].get("zero_intervention"):
+                    d["settings"]["zero_intervention"] = False
+                    zero_lost.append(True)
             p["reports_to"] = new
             notes.append(f"moved under {new or 'the top'}")
         if seat:
@@ -1187,6 +1206,8 @@ def update_position(slug: str, pos: str, fields: dict, rev: int | None = None) -
         return notes
 
     _apply(slug, edit, lambda d, n: f"Position {pos}: " + (", ".join(n) or "edited"))
+    if zero_lost:
+        _zero_lost(slug)
     _release_top(slug)
     return get(slug)
 
@@ -1204,7 +1225,10 @@ def subtree_of(d: dict, pos: str) -> list[str]:
 
 
 def remove_position(slug: str, pos: str, reparent_to: str | None = None) -> dict:
+    zero_lost: list[bool] = []
+
     def edit(d: dict) -> tuple[int, str]:
+        zero_lost.clear()
         p = _find(d, pos)
         reports = [x for x in d["positions"] if x["reports_to"] == pos]
         new = p["reports_to"]                           # who takes over its requests: the new lead, else its own lead
@@ -1221,6 +1245,9 @@ def remove_position(slug: str, pos: str, reparent_to: str | None = None) -> dict
         if d["top"] == pos:
             d["top"] = "owner"
             d["settings"]["top_decides"] = False
+            if d["settings"].get("zero_intervention"):
+                d["settings"]["zero_intervention"] = False
+                zero_lost.append(True)
         if d["settings"].get("review_by") == pos:
             d["settings"]["review_by"] = ""
         return len(reports), new or ""
@@ -1231,9 +1258,30 @@ def remove_position(slug: str, pos: str, reparent_to: str | None = None) -> dict
     except OSError:
         pass
     _reassign_requester(slug, pos, heir)
+    if zero_lost:
+        _zero_lost(slug)
     _release_top(slug)
     _release_reviews(slug)
     return get(slug)
+
+
+ZERO_LOST = {"en": ("Total autonomy is off", "The top position left the chart, so total autonomy was switched off. Choose a new top "
+                    "position in the settings and switch it on again."),
+             "fr": ("L'autonomie totale est coupée", "La position du haut a quitté l'organigramme : l'autonomie totale a été "
+                    "coupée. Choisissez une nouvelle position du haut dans les réglages puis réactivez-la.")}
+
+
+def _zero_lost(slug: str) -> None:
+    """Total autonomy was switched off because the top position went away: logged, the owner is told once."""
+    log(slug, "structure", "Total autonomy switched off: the top position is gone", by="server")
+    try:
+        lang = config.load_config().get("language", "en")
+        title, body = ZERO_LOST.get(lang, ZERO_LOST["en"])
+        from . import enterprise_reports
+        enterprise_reports.notify_owner(slug, f"{(load(slug).get('name') or slug)}: {title}", body, level="warning",
+                                        url=f"/enterprises/{slug}", dedupe=f"zero_lost:{slug}:{int(time.time())}", always=True)
+    except Exception:  # noqa: BLE001 - the change stands
+        logger.exception("owner not told that total autonomy went off for %s", slug)
 
 
 def _release_top(slug: str) -> None:

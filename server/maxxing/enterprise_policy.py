@@ -27,6 +27,7 @@ log = logging.getLogger("maxxing.enterprise_policy")
 PROFILES = ("careful", "balanced", "autonomous")
 UNBUDGETED_RUN_USD = 0.5                           # the most one run of an agent without a budget may spend (and hold) under a ceiling
 GRANT_MAX_S = 30 * 86400 + 3600                     # a grant lasts 30 days at most (an hour of slack)
+RENEW_MAX = 3                                       # renewals of a request stopped at the top before the owner gets its card
 KEEP = 500                                          # requests kept per enterprise (the oldest answered go first)
 
 
@@ -288,14 +289,14 @@ def _owner_or_top(slug: str, category: str, use_top: bool = True) -> tuple[str, 
 
 
 def _route(slug: str, pos: str, category: str, amount: float | None, outside: bool,
-           now: float | None = None, use_top: bool = True) -> tuple[str, str]:
+           now: float | None = None, use_top: bool = True, zero_on: bool = True) -> tuple[str, str]:
     """(kind, who): free | lead | owner, and the deciding position for a lead. Structure only: it does not look at
-    whether the lead is running (request() skips the ones that are not)."""
+    whether the lead is running (request() skips the ones that are not). zero_on False: as if total autonomy were off."""
     if outside or category not in CATEGORIES:
         return "owner", ""                                   # invariant 1; an unknown category is never delegated
     if category == "spending" and amount is None:
         return _owner_or_top(slug, category, use_top)        # undeclared spending
-    if zero(slug) and category not in TOP_NEVER:
+    if zero_on and zero(slug) and category not in TOP_NEVER:
         if CATEGORIES[category].get("autonomous") == "free":
             return "free", ""                                # what is free stays free: no request for routine work
         top = _data(slug).get("top")
@@ -361,7 +362,7 @@ def _title(slug: str, pos: str) -> str:
 
 
 def _deliver(slug: str, pos: str, kind: str, text: str, *, sender: str = "", outside: bool = False,
-             session: str = "") -> None:
+             session: str = "", ref: str = "") -> None:
     try:
         from . import enterprise_flow
         fn = enterprise_flow.deliver
@@ -369,7 +370,7 @@ def _deliver(slug: str, pos: str, kind: str, text: str, *, sender: str = "", out
         fn = None
     try:
         if fn is not None:
-            fn(slug, pos, kind, text, sender=sender, outside=outside, session=session)
+            fn(slug, pos, kind, text, sender=sender, outside=outside, session=session, ref=ref)
             return
         d = enterprises.state(slug) / "inbox"
         d.mkdir(parents=True, exist_ok=True)
@@ -425,7 +426,7 @@ def _hand_to(slug: str, r: dict, who: str) -> None:
              _t("req_to_lead", id=r["id"], who=_title(slug, r["position"]), cat=r["category"], out=out, text=r["text"])
              + (_t("req_amount", x=r["amount"]) if isinstance(r.get("amount"), (int, float)) else "")
              + _t("req_decide", id=r["id"]),
-             sender=r["position"], outside=bool(r.get("outside")), session=r.get("session") or "")
+             sender=r["position"], outside=bool(r.get("outside")), session=r.get("session") or "", ref=f"req:{r['id']}")
 
 
 # ---- request / decide ------------------------------------------------------------------------------------------
@@ -460,8 +461,9 @@ def request(slug: str, pos: str, category: str, text: str, *, amount: float | No
                          "outside": bool(outside), "session": str(session or "")[:64], "deadline": None,
                          "decided_by": "", "decided_at": None, "reason": "", "level": 0,
                          "payload": payload if isinstance(payload, dict) else None}
-    if kind == "lead" and _top_decides(slug) and _route(slug, pos, category, amount, outside, now, use_top=False)[0] == "owner":
-        r["for_owner"] = True                                # the top decides in the owner's place: taken back when that stops
+    if kind == "lead" and (_top_decides(slug) or zero(slug)) and _route(slug, pos, category, amount, outside, now,
+                                                                       use_top=False, zero_on=False)[0] == "owner":
+        r["for_owner"] = True                                # a lead or the top decides in the owner's place: taken back when that stops
     if kind == "free":
         r.update(status="allowed", decider="free", decided_by="policy", decided_at=now)
     elif kind == "lead":
@@ -504,14 +506,23 @@ def _check_hire(slug: str, pos: str, payload: Any) -> dict:
     return out
 
 
+def _still_held(slug: str, r: dict, top: Any) -> bool:
+    """A pending owner-level request may stay with its decider: the top while it decides for the owner, any lead of the
+    requester (or the top) while total autonomy is on."""
+    who = r.get("decider")
+    if zero(slug):
+        return who == top or who in enterprises.ancestors(slug, r["position"])
+    return _top_decides(slug) and who == top
+
+
 def release_top(slug: str) -> None:
-    """Pending requests the top held in the owner's place go back to the owner once the top no longer decides."""
+    """Pending requests a lead or the top held in the owner's place go back to the owner once that stops holding."""
     back: list[dict] = []
     with enterprises._lock:
         items = _read(slug)
         top = _data(slug).get("top")
         for r in items:
-            if r.get("status") == "pending" and r.get("for_owner") and not (_top_decides(slug) and r.get("decider") == top):
+            if r.get("status") == "pending" and r.get("for_owner") and not _still_held(slug, r, top):
                 r.update(decider="owner", for_owner=False, deadline=None)
                 back.append(dict(r))
         if back:
@@ -548,7 +559,7 @@ def decide(slug: str, req_id: str, decision: str, *, reason: str = "", by: str |
         top_ok = (not owner and r["decider"] == by and by == _data(slug).get("top") and _top_decides(slug)
                   and r["category"] not in TOP_NEVER and not r.get("outside"))
         if not owner and not top_ok:
-            if r.get("for_owner"):
+            if r.get("for_owner") and not (zero(slug) and by == r["decider"] and not r.get("outside")):
                 raise EnterpriseError(403, "not_decider", "This request waits for the owner")
             if by == r["position"]:
                 raise EnterpriseError(403, "self_decision", "Nobody decides their own request")
@@ -593,7 +604,8 @@ def _tell_owner_applies(slug: str, r: dict, who: str) -> None:
     try:
         from . import enterprise_reports
         enterprise_reports.notify_owner(slug, _t("applies_title", label=label), body, level="info",
-                                        url=f"/enterprises/{slug}", dedupe=f"enterprise:{slug}:{r['id']}:applies")
+                                        url=f"/enterprises/{slug}", dedupe=f"enterprise:{slug}:{r['id']}:applies",
+                                        always=True)
     except Exception:  # noqa: BLE001
         log.exception("enterprise %s: owner notification failed", slug)
 
@@ -724,11 +736,23 @@ def _climb(slug: str, now: float) -> None:
             if r["deadline"] > now:
                 continue
             nxt = _pick(slug, r["position"], after=r["decider"])
+            step = int(enterprises.setting(slug, "escalation_timeout_h", r["position"]) or 4) * 3600
+            if nxt == r["decider"]:                          # stopped at the top: renewed with a back-off, then the owner
+                n = int(r.get("renewals") or 0) + 1
+                r["renewals"] = n
+                if n <= RENEW_MAX:
+                    r["deadline"] = now + step * 2 ** n
+                    enterprises.log(slug, "request_climbed", f"{r['category']}: no answer from {r['decider']}, still with it",
+                                    by="policy", position=r["position"])
+                    moved.append((dict(r), nxt))             # one copy at a time: kept as is while it waits in the inbox
+                    continue
+                nxt = "owner"
             enterprises.log(slug, "request_climbed", f"{r['category']}: no answer from {r['decider']}, to {nxt}",
                             by="policy", position=r["position"])
             r["decider"], r["level"] = nxt, int(r.get("level") or 0) + 1
-            r["deadline"] = None if nxt == "owner" else now + int(
-                enterprises.setting(slug, "escalation_timeout_h", r["position"]) or 4) * 3600
+            r["deadline"] = None if nxt == "owner" else now + step
+            if nxt == "owner":
+                r["for_owner"] = False
             moved.append((dict(r), nxt))
         if moved:
             _write(slug, items)
