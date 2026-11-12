@@ -113,3 +113,11 @@ def test_profile_roundtrip_and_validation(ent, client):
 def test_damaged_profile_reads_as_empty(ent, mx):
     (mx["ws"] / "enterprises" / "acme-group" / "profile.json").write_text("{not json", encoding="utf-8")
     assert ek.profile("acme-group")["products"] == []
+
+
+def test_zero_note_paragraph_inside_the_cap(ent, client):
+    assert "report-to-owner" not in ek.note(W)
+    assert client.patch(ent, json={"top": "lead", "settings": {"zero_intervention": True}}).status_code == 200
+    n = ek.note(W)
+    assert "maximally proactive" in n and "tasks --mine" in n and "report-to-owner" in n and "no pipes" in n
+    assert len(n) <= ek.NOTE_MAX and n == ek.note(W)

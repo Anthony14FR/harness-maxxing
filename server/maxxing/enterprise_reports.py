@@ -510,7 +510,8 @@ def build(slug: str, kind: str = "daily", now: float | None = None, *, send: boo
             _save_index(slug, idx)
     enterprises.invalidate(slug)
     if send:
-        notify_owner(slug, title, out["text"][:FEED_BODY], url=f"/enterprises/{slug}", dedupe=f"report:{slug}:{out['name']}")
+        notify_owner(slug, title, out["text"][:FEED_BODY], url=f"/enterprises/{slug}", dedupe=f"report:{slug}:{out['name']}",
+                     always=True)
     return out
 
 
@@ -627,10 +628,17 @@ def _tick_one(slug: str, now: float) -> None:
 
 # ---- notifying the owner ------------------------------------------------------------------------------------------
 def notify_owner(slug: str, title: str, body: str = "", *, level: str = "info", url: str = "", ref: str | None = None,
-                 actions: list[dict] | None = None, dedupe: str | None = None) -> None:
+                 actions: list[dict] | None = None, dedupe: str | None = None,
+                 always: bool = False) -> None:
     """One event for the owner: the Notifications feed (source "enterprises") and, when Telegram is linked, the
     enterprise's thread (the main chat with its emoji in simple mode). A reply there answers an escalation. Never
-    raises."""
+    raises. In zero intervention only cards (actions), `always` ones (top report, reports, envelope alerts) are sent."""
+    try:
+        if not actions and not always and enterprises.setting(slug, "zero_intervention"):
+            enterprises.log(slug, "owner_muted", title[:200])
+            return
+    except Exception:  # noqa: BLE001
+        log.exception("zero intervention check")
     ev: dict | None = None
     try:
         from . import feed
