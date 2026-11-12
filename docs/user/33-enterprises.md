@@ -105,10 +105,15 @@ Deliveries are not one run per message: they wait in the position's **inbox**, a
 everything waiting, after its usual grouping delay. A delivery that cannot start (agent off, budget or runs per hour
 reached, vacant position) **waits** instead of being lost. These runs count in the agent's budget and limits.
 
-**Follow-ups**: nobody has to watch for a late task. When a delegated task has not moved for **4 hours** (**2 hours**
-in total autonomy), the position that asked for it is woken with the list of those tasks, to chase, escalate or decide
-(once per task per period; a task whose owner is running right now is left alone). In total autonomy the top position
-also gets one **daily follow-up** listing every open task. See what is open with `maxxing enterprise tasks`.
+**Follow-ups**: nobody has to watch for a late task. In total autonomy, when a delegated task has not moved for
+**2 hours**, the position that asked for it is woken with the list of those tasks, to ask the owner of each task,
+escalate, decide or accept what is ready. A task is nudged again after twice as long each time (4 hours, 8, 16, then
+every 24 hours at most) and the count starts over when it moves; a task whose owner is running right now is left alone.
+Outside total autonomy follow-ups are off until you set **stale_h** (hours, 0 to 168, 0 = off) in the settings. In
+total autonomy the top position also gets one **daily follow-up** listing the open tasks; a task that carries outside
+content is only counted ("N tasks with outside content"), never quoted. See what is open with
+`maxxing enterprise tasks` (an agent sees the title of such a task as "[outside content]", and a protected agent only
+the tasks of its own position, its lead and its reports).
 
 Delegation to a direct report never needs a request, whatever the department of the report. This is fixed
 behaviour, not a setting.
@@ -214,10 +219,17 @@ Occupants are told to work with maximum proactivity: never wait, chase, decide a
 - **Still yours**: requests born from outside content, `hire` and `hire_remove`, prices and terms, and putting the
   front desk live.
 - **Escalations stop at the top**: a question climbs no further than the top position, which answers it. Only when the
-  top is unavailable does it reach you.
-- **Only the top writes to you**, with `maxxing enterprise report-to-owner "text"` (no other position may). Every
-  other notification is muted (it stays in the decision log) except the cards that wait for your answer, the daily
-  digest and the weekly and monthly reports, and the envelope alerts.
+  top is unavailable does it reach you. A question or a request the top leaves unanswered is renewed after a longer
+  wait each time (one copy in its inbox at a time); after three renewals it reaches you as a card.
+- **Only the top writes to you**, with `maxxing enterprise report-to-owner "text"` (no other position may; at most 6 an
+  hour, and a message written in a run started from outside content says so). Every other notification is muted (it
+  stays in the decision log) except the cards that wait for your answer, the daily digest and the weekly and monthly
+  reports, the envelope alerts, and what only you can act on: a request allowed that you still have to apply, a hand-in
+  or a blocked task you asked for (or that came from the front desk), the minutes of your meetings and the front
+  desk insights.
+- **No top, no total autonomy**: if the top position is removed or moved, or the top is set to you, total autonomy
+  switches itself off and you are told once. Choose a new top and switch it on again.
+- Switching it **off** gives the requests that were waiting for a lead in your place back to you.
 
 **Delegated approval**: you can let a lead decide a category up to a ceiling until a date ("until Friday, the head of
 marketing decides spending up to 50 USD"), 30 days at most, revocable. It never covers the rows where you always

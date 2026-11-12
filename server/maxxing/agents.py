@@ -672,7 +672,7 @@ ENTERPRISE_READONLY = tuple(f"Bash(maxxing enterprise {c}:*)" for c in ("show", 
 
 
 def _enterprise_readonly(path: str) -> list[str]:
-    """The read-only enterprise commands an occupant always runs without asking, outside runs included."""
+    """The read-only enterprise commands an occupant runs without asking (never in a run started by outside text)."""
     try:
         from . import enterprises
         return list(ENTERPRISE_READONLY) if enterprises.feature_on() and enterprises.seat_of(path) else []
@@ -721,7 +721,7 @@ def run_settings(path: str, outside: bool = False, session: str | None = None, g
     args: list[str] = []
     forced = outside and not a["trust_outside"]
     # pre-allowed tools never ask: in a turn started by outside text they would skip the approvals it gets
-    pre_ok = ([] if forced else list(a["allowed_tools"])) + ([] if desk else _enterprise_readonly(path))
+    pre_ok = ([] if forced else list(a["allowed_tools"])) + ([] if desk or forced else _enterprise_readonly(path))
     if pre_ok:
         args += ["--allowedTools", ",".join(dict.fromkeys(pre_ok))]
     no_workers = _enterprise_no_workers(path)

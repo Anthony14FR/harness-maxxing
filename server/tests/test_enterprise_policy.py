@@ -776,10 +776,9 @@ def test_zero_needs_a_top_and_exposes_effective_values(ent):
     _set(ent, top="boss", settings={"autonomy": "careful", "zero_intervention": True})
     d = ent.get(E).json()
     assert d["settings"]["autonomy"] == "careful" and d["settings"]["trust_chain"] is False
-    assert d["effective"] == {"autonomy": "autonomous", "trust_chain": True, "top_decides": True}
+    assert d["effective"] == {"autonomy": "autonomous", "trust_chain": True, "top_decides": True, "stale_h": 2}
     assert enterprises.setting(SLUG, "autonomy", "writer") == "autonomous" and pol.zero(SLUG)
-    assert ent.patch(E, json={"top": "owner"}).json()["error"] == "needs_top"
-    _set(ent, settings={"zero_intervention": False})
+    assert ent.patch(E, json={"settings": {"zero_intervention": False}, "top": "owner"}).status_code == 200
     assert ent.get(E).json()["effective"]["autonomy"] == "careful" and not pol.zero(SLUG)
 
 
@@ -805,3 +804,74 @@ def test_zero_skips_an_unavailable_lead_and_stops_at_the_top(ent):
     assert pol._pick(SLUG, "writer", after="boss") == "boss"
     ent.patch(f"{E}/positions/boss", json={"agent": None, "rev": ent.get(E).json()["rev"]})
     assert pol.request(SLUG, "writer", "publish", "Again")["decider"] == "owner"
+
+
+# ---- review fixes: owner-level requests, renewals at the top, total autonomy and its top -------------------------
+def test_zero_marks_owner_level_requests_and_gives_them_back_when_it_goes_off(ent):
+    _set(ent, top="boss", settings={"zero_intervention": True})
+    r = pol.request(SLUG, "writer", "publish", "Post the announcement")
+    assert r["decider"] == "head"
+    assert pol.decide(SLUG, pol.request(SLUG, "writer", "publish", "Another")["id"], "deny", by="head")["status"] == "denied"
+    _set(ent, settings={"zero_intervention": False})
+    back = next(x for x in pol.requests(SLUG) if x["id"] == r["id"])
+    assert back["decider"] == "owner" and back["status"] == "pending"
+    with pytest.raises(enterprises.EnterpriseError) as e:
+        pol.decide(SLUG, r["id"], "allow", by="head")
+    assert e.value.code in ("not_decider", "not_in_subtree")
+
+
+def test_a_request_from_the_top_changing_goes_back_to_the_owner(ent):
+    _set(ent, top="boss", settings={"zero_intervention": True})
+    r = pol.request(SLUG, "writer", "publish", "Post it")
+    _set(ent, top="owner")
+    assert not pol.zero(SLUG)
+    assert next(x for x in pol.requests(SLUG) if x["id"] == r["id"])["decider"] == "owner"
+
+
+def test_a_request_stopped_at_the_top_is_renewed_with_a_back_off_then_goes_to_the_owner(ent, monkeypatch):
+    _set(ent, top="boss", settings={"zero_intervention": True})
+    cards = []
+    monkeypatch.setattr(pol, "_notify", lambda slug, r: cards.append(r["id"]))
+    monkeypatch.setattr("maxxing.enterprise_flow._flush", lambda *a, **k: "waiting")
+    r = pol.request(SLUG, "boss", "publish", "Announce")
+    assert r["decider"] == "boss" and len(_msgs("boss", "request")) == 1
+    t = time.time()
+    for h in (5, 14, 31):
+        pol.tick(t + h * 3600)
+        assert len(_msgs("boss", "request")) == 1 and not cards
+        assert next(x for x in pol.requests(SLUG) if x["id"] == r["id"])["decider"] == "boss"
+    pol.tick(t + 64 * 3600)
+    cur = next(x for x in pol.requests(SLUG) if x["id"] == r["id"])
+    assert cur["decider"] == "owner" and cards == [r["id"]]
+    pol.tick(t + 300 * 3600)
+    assert cards == [r["id"]]
+
+
+def test_a_lead_allowing_what_the_owner_applies_is_told_to_the_owner(ent, monkeypatch):
+    got = []
+    import maxxing.enterprise_reports as rep
+    monkeypatch.setattr(rep, "notify_owner", lambda slug, title, body="", **kw: got.append(kw))
+    _set(ent, top="boss", settings={"zero_intervention": True})
+    r = pol.request(SLUG, "writer", "raise_budget", "More budget please")
+    pol.decide(SLUG, r["id"], "allow", by="head")
+    assert got and got[-1]["always"] is True
+
+
+@pytest.mark.parametrize("how", ["removed", "top_owner"])
+def test_losing_the_top_switches_total_autonomy_off(ent, how, monkeypatch):
+    got = []
+    import maxxing.enterprise_reports as rep
+    monkeypatch.setattr(rep, "notify_owner", lambda slug, title, body="", **kw: got.append((title, kw)))
+    _set(ent, top="boss", settings={"zero_intervention": True})
+    rev = ent.get(E).json()["rev"]
+    if how == "removed":
+        assert ent.delete(f"{E}/positions/boss?reparent_to=owner").status_code == 200
+    else:
+        assert ent.patch(E, json={"top": "owner"}).status_code == 200
+    d = ent.get(E).json()
+    assert d["top"] == "owner" and d["settings"]["zero_intervention"] is False
+    assert len(got) == 1 and got[0][1]["always"] is True
+    assert any("Total autonomy switched off" in x["text"] for x in enterprises.decisions(SLUG)[0])
+    assert ent.patch(E, json={"settings": {"zero_intervention": False}}).status_code == 200
+    assert ent.patch(E, json={"settings": {"zero_intervention": True}}).json()["error"] == "needs_top"
+

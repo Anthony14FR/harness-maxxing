@@ -611,8 +611,13 @@ def _ago(at: float) -> str:
     return f"{h * 60:.0f}m" if h < 1 else f"{h:.0f}h" if h < 48 else f"{h / 24:.0f}d"
 
 
-def _tasks(a, slug: str, pos: str) -> int:
-    rows = _module("enterprise_flow", "tasks_view")(slug, include_done=a.all)
+def _tasks(a, slug: str, pos: str, turn: dict) -> int:
+    from . import agent_guard, enterprises
+    agent = bool(turn["path"])
+    rows = _module("enterprise_flow", "tasks_view")(slug, include_done=a.all, hide_outside=agent and not turn["outside"])
+    if agent and agent_guard.sandboxed_turn():          # a sandboxed turn: its own tasks, its lead's and its reports'
+        near = {x for x in {pos, *enterprises.reports_of(slug, pos), enterprises.lead_of(slug, pos)} if x}
+        rows = [r for r in rows if r["owner"] in near or r["requester"] in near]
     if a.mine:
         rows = [r for r in rows if pos and pos in (r["owner"], r["requester"])]
     if a.json:
@@ -632,9 +637,10 @@ def _turn_cmd(a) -> int:
         return _profile(a)
     slug, pos, turn = _actor(a)
     if c == "tasks":
-        return _tasks(a, slug, pos)
+        return _tasks(a, slug, pos, turn)
     if c == "report-to-owner":
-        r = _module("enterprise_flow", "report_to_owner")(slug, pos, _text(a), session=turn["session"])
+        r = _module("enterprise_flow", "report_to_owner")(slug, pos, _text(a), session=turn["session"],
+                                                                        outside=turn["outside"])
         return _say(a, r, "reported to the owner")
     sess, outside = turn["session"], turn["outside"]
     if c == "assign":
@@ -643,7 +649,7 @@ def _turn_cmd(a) -> int:
         return _say(a, t, f"assigned {t.get('id', '')} to {a.position}".replace("  ", " "))
     if c in ("done", "block"):
         fn = _module("enterprise_flow", c)
-        t = fn(slug, _need_pos(pos, f"`{c}`"), a.task, _text(a), session=sess)
+        t = fn(slug, _need_pos(pos, f"`{c}`"), a.task, _text(a), session=sess, outside=outside)
         return _say(a, t, f"{a.task}: {'handed in' if c == 'done' else 'marked blocked'}")
     if c == "escalate":
         r = _module("enterprise_flow", "escalate")(slug, _need_pos(pos, "`escalate`"), _text(a), task=a.task,
@@ -674,7 +680,7 @@ def _turn_cmd(a) -> int:
         return _say(a, r, f"request {r.get('id', '')} ({r.get('status', 'sent')})".replace("  ", " "))
     if c == "review":
         r = _module("enterprise_flow", "review")(slug, _need_pos(pos, "`review`"), a.task, a.decision,
-                                                 " ".join(a.notes).strip(), session=sess)
+                                                 " ".join(a.notes).strip(), session=sess, outside=outside)
         return _say(a, r, f"{a.task}: {'approved' if a.decision == 'approve' else 'sent back with changes'}")
     if c == "meeting":
         return _meeting(a, slug, pos, turn)

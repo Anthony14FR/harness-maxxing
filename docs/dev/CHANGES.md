@@ -292,12 +292,25 @@ shown in the product. Newest first, same version headings as `CHANGELOG.md`.
   gains one paragraph in zero mode.
   Trust: with the effective `trust_chain`, clean items (`_dirty`: no outside mark on the item or its task) going up are
   delivered in the trusted prompt framed by `UP_FRAME`; a mixed batch is split (outside items alone).
-  `agents.run_settings` always pre-allows `ENTERPRISE_READONLY` (`show`, `profile`, `tasks`) for a seated agent, outside
-  and forced runs included, except a front desk run; the commands must be alone on their line to match.
-  Follow-up: kind `followup` (a DOWN kind), `stale_hours` reads `stale_h` (default 4, zero mode 2, 0 = off; read from
-  the stored settings, not in the validated list nor the settings page); the tick wakes the requester of a quiet open
-  task once per `stale_h` (`flow.nudged`), skips tasks whose owner runs, and in zero mode wakes the top once a day
-  (`flow.top_followup`) with every open task. CLI `tasks [--mine] [--all] [--json]` (`tasks_view`, in `TURN_CMDS`).
+  `agents.run_settings` pre-allows `ENTERPRISE_READONLY` (`show`, `profile`, `tasks`) for a seated agent except in a
+  forced (outside) run and a front desk run; the commands must be alone on their line to match.
+  Follow-up: kind `followup` (a DOWN kind), `stale_hours` reads the validated setting `stale_h` (`null` default, 0..168;
+  unset: 2 in zero mode, off otherwise; `effective.stale_h` in `GET /{e}`); the tick wakes the requester of a quiet open
+  task, again after `stale_h * 2^n` (cap max(stale_h, 24 h); `flow.nudged[task] = {at, n}`, reset when the task moves),
+  skips tasks whose owner runs, cuts the list with "and N more", and in zero mode wakes the top once a day
+  (`flow.top_followup`) with the open tasks: a task marked outside is counted, never quoted. `_followups` has its own
+  `try` in the tick.
+  Outside marks: `done`, `block`, `review` take `outside` (the CLI passes the run's mark); the hand-in is marked outside
+  when the run was (`summary_outside` on the task keeps it through the review); `_dirty` also reads the item's session
+  environment. A mixed batch serves the group of the oldest item first. `tasks_view(hide_outside=)` and the CLI `tasks`
+  show `[outside content]` to a clean agent turn and narrow a sandboxed turn to its own position, lead and reports.
+  `report_to_owner(outside=)` tags the text and allows 6 messages an hour (`429 rate_limited`, `flow.reports`).
+  Items stopped at the top: `deliver(ref=)` keeps one copy per ref in an inbox (`esc:<id>`, `req:<id>`); `renewals`
+  doubles the wait (`RENEW_MAX` = 3) then the owner gets the card. Owner-level requests carry `for_owner` in zero mode
+  too (`_route(zero_on=False)`) and `release_top` gives them back once neither zero mode nor the top decides.
+  `notify_owner(always=True)` for hand-ins / blocks of owner or desk requested tasks, minutes of the owner's meetings,
+  desk insights and "allowed, the owner applies it". Moving or removing the top, or `top` = `owner`, clears
+  `zero_intervention` (`enterprises._zero_lost`). CLI `tasks [--mine] [--all] [--json]` (`tasks_view`, in `TURN_CMDS`).
   Routes `GET /api/enterprises/{e}/tasks` and `/now` (`now_view`), see API.md. Web: "Total autonomy" switch (the three
   forced controls show their effective value, disabled), `NowStrip`, `Tasks` tab, `Delegations` card on the agent page
   (reads the enterprise bus topic).

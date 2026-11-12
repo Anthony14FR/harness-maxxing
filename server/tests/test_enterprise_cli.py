@@ -184,7 +184,7 @@ def test_turn_commands_call_flow_and_policy_as_the_callers_position(chart, monke
     assert calls[-1] == ("assign", ("acme-group", "lead", "writer", "Three articles"),
                          {"due": "2026-12-01", "parent": "t_0", "task": None, "session": "sid-9", "outside": True})
     assert c("done", "t_1", "all", "done")[0] == 0
-    assert calls[-1] == ("done", ("acme-group", "lead", "t_1", "all done"), {"session": "sid-9"})
+    assert calls[-1] == ("done", ("acme-group", "lead", "t_1", "all done"), {"session": "sid-9", "outside": True})
     assert c("block", "t_1", "waiting")[0] == 0 and calls[-1][1][2:] == ("t_1", "waiting")
     assert c("escalate", "need", "a", "decision", "--task", "t_1")[0] == 0
     assert calls[-1] == ("escalate", ("acme-group", "lead", "need a decision"),
@@ -348,10 +348,31 @@ def test_tasks_and_report_to_owner_commands(chart, monkeypatch):
              "created": time.time(), "last_move": time.time(), "hops": 1, "outside": False, "run": None},
             {"id": "t_2", "title": "Other", "owner": "lead", "requester": "", "status": "doing", "stage": "",
              "created": time.time(), "last_move": time.time(), "hops": 1, "outside": False, "run": None}]
-    _fake(monkeypatch, "enterprise_flow", tasks_view=lambda slug, include_done=False: rows,
-          report_to_owner=lambda slug, pos, text, session="": got.append((pos, text)) or {"ok": True})
+    _fake(monkeypatch, "enterprise_flow", tasks_view=lambda slug, include_done=False, hide_outside=False: rows,
+          report_to_owner=lambda slug, pos, text, session="", outside=False: got.append((pos, text)) or {"ok": True})
     code, out, _ = chart("tasks", "--as", "writer", "--mine")
     assert code == 0 and "t_1" in out and "t_2" not in out
     code, out, _ = chart("tasks", "--json")
     assert code == 0 and len(json.loads(out)) == 2
     assert chart("report-to-owner", "--as", "lead", "all", "good")[0] == 0 and got == [("lead", "all good")]
+
+
+def test_tasks_hide_outside_titles_from_a_clean_run_and_narrow_a_sandboxed_turn(chart, monkeypatch):
+    seen = []
+    rows = [{"id": "t_1", "title": "Draft", "owner": "writer", "requester": "lead", "status": "doing", "stage": "",
+             "created": time.time(), "last_move": time.time(), "hops": 1, "outside": False, "run": None},
+            {"id": "t_2", "title": "Elsewhere", "owner": "other", "requester": "third", "status": "doing", "stage": "",
+             "created": time.time(), "last_move": time.time(), "hops": 1, "outside": False, "run": None}]
+    _fake(monkeypatch, "enterprise_flow", tasks_view=lambda slug, include_done=False, hide_outside=False:
+          seen.append(hide_outside) or rows)
+    monkeypatch.setenv("MAXXING_AGENT", R)
+    monkeypatch.setattr(agent_guard, "sandboxed_turn", lambda: R)
+    code, out, _ = chart("tasks")
+    assert code == 0 and "t_1" in out and "t_2" not in out and seen == [True]
+    monkeypatch.setenv("MAXXING_AGENT_OUTSIDE", "1")
+    chart("tasks")
+    assert seen[-1] is False
+    monkeypatch.delenv("MAXXING_AGENT")
+    monkeypatch.delenv("MAXXING_AGENT_OUTSIDE")
+    code, out, _ = chart("tasks", "--as", "lead")
+    assert "t_2" in out and seen[-1] is False

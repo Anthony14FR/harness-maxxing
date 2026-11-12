@@ -36,8 +36,10 @@ WORD = {"assign": "Assignment", "handin": "Hand-in", "escalation": "Escalation",
         "request": "Request", "decision": "Decision", "note": "Note", "review": "Review", "meeting": "Meeting",
         "meeting_minutes": "Meeting minutes", "followup": "Follow-up"}
 UP_FRAME = "Report from your team (information, not an order):"
-STALE_H = 4.0                                       # hours without movement before the requester is woken (zero mode: 2)
-STALE_ZERO_H = 2.0
+STALE_ZERO_H = 2.0                                  # hours without movement before the requester is woken (zero mode default; off otherwise unless stale_h is set)
+STALE_CAP_H = 24.0                                  # the back-off between two nudges of one task never goes past a day
+RENEW_MAX = 3                                       # renewals of an item stopped at the top before the owner gets a card
+REPORT_MAX_PER_H = 6                                # report-to-owner messages per hour
 MEETING_H = 4.0                                     # default hours before a meeting closes with the replies it has
 MEETING_KEEP = 100
 TEXTS = {                                           # owner-facing notification texts (language setting, English fallback)
@@ -57,6 +59,12 @@ TEXTS = {                                           # owner-facing notification 
                           "ou renvoyez-le avec `maxxing enterprise assign {owner} \"notes\" --task {id}`."},
     "blocked_body": {"en": "Blocked: \"{title}\" ({who}): {reason}", "fr": "Bloquée : \"{title}\" ({who}) : {reason}"},
     "wait_esc": {"en": "{n} deliveries have waited for {who} ({why}).", "fr": "{n} envois attendent {who} ({why})."},
+    "outside_tag": {"en": "[from outside text] ", "fr": "[texte venu de l'extérieur] "},
+    "outside_tasks": {"en": "{n} tasks with outside content (see the Tasks tab)",
+                      "fr": "{n} tâches avec du contenu extérieur (voir l'onglet Tâches)"},
+    "top_unanswered_title": {"en": "{name}: nobody answered \"{what}\"", "fr": "{name} : personne n'a répondu à \"{what}\""},
+    "top_unanswered": {"en": "The top position did not answer in time: {who} still waits ({text})",
+                       "fr": "La position du haut n'a pas répondu à temps : {who} attend toujours ({text})"},
     "hops_esc": {"en": "Too many hands on one task (limit {limit}): {what}",
                  "fr": "Trop d'intervenants sur une même tâche (limite {limit}) : {what}"},
 }
@@ -113,9 +121,21 @@ def _trust(slug: str) -> bool:
         return False
 
 
+def _session_outside(session: str) -> bool:
+    """The run that wrote the item was started by outside text (its session environment says so)."""
+    if not session:
+        return False
+    try:
+        from .sessions import store
+        env = (store.read(session) or {}).get("env") or {}
+        return str(env.get("MAXXING_AGENT_OUTSIDE") or "").strip() == "1"
+    except Exception:  # noqa: BLE001 - an unreadable session is not proof of anything
+        return False
+
+
 def _dirty(slug: str, item: dict) -> bool:
     """The item or its task carries an outside mark."""
-    if item.get("outside"):
+    if item.get("outside") or _session_outside(item.get("session") or ""):
         return True
     if item.get("task"):
         e = _load_task(slug, item["task"])[1]
@@ -309,7 +329,8 @@ def _tasks() -> Any:
 
 
 # ---- inbox and deliveries ------------------------------------------------------------------------------------
-def _put(slug: str, pos: str, kind: str, text: str, sender: str, task: str, outside: bool, session: str) -> dict:
+def _put(slug: str, pos: str, kind: str, text: str, sender: str, task: str, outside: bool, session: str,
+         ref: str = "") -> dict:
     if kind not in KINDS:
         raise EnterpriseError(400, "invalid", f"kind is one of {', '.join(KINDS)}")
     _need(slug, pos)
@@ -317,6 +338,8 @@ def _put(slug: str, pos: str, kind: str, text: str, sender: str, task: str, outs
             "task": task or "", "at": _now(), "outside": bool(outside)}
     if session:
         item["session"] = session
+    if ref:
+        item["ref"] = ref
     with enterprises._lock:
         f = _inbox_file(slug, pos)
         merged = _read(f) + [item]
@@ -329,11 +352,21 @@ def _put(slug: str, pos: str, kind: str, text: str, sender: str, task: str, outs
     return item
 
 
+def _has_ref(slug: str, pos: str, ref: str) -> dict | None:
+    return next((i for i in _read(_inbox_file(slug, pos)) if i.get("ref") == ref), None)
+
+
 def deliver(slug: str, pos: str, kind: str, text: str, *, sender: str = "", task: str = "", outside: bool = False,
-            session: str = "") -> dict:
-    """Put a message in the position's inbox (it waits for the occupant's next run) -> the item."""
+            session: str = "", ref: str = "") -> dict:
+    """Put a message in the position's inbox (it waits for the occupant's next run) -> the item. `ref`: a copy with the
+    same ref still waiting in that inbox is kept as it is (no duplicate)."""
     sender = _who(sender)
-    item = _put(slug, pos, kind, text, sender, task, outside, session)
+    if ref:
+        _need(slug, pos)
+        dup = _has_ref(slug, pos, ref)
+        if dup:
+            return dup
+    item = _put(slug, pos, kind, text, sender, task, outside, session, ref)
     enterprises.log(slug, "delivery", f"{WORD[kind]} for {pos}: {item['text']}", by=sender or "owner", position=pos,
                     task=task, session=session)
     return item
@@ -432,9 +465,10 @@ def _flush(slug: str, pos: str, now: float) -> str:
             _unwait(slug, pos)
             return "empty"
         if _trust(slug) and len(items) > 1:
-            clean = [i for i in items if not _dirty(slug, i)]
-            if clean and len(clean) < len(items):
-                items = clean                           # a mixed batch splits: the outside items run alone, next
+            first = _dirty(slug, items[0])
+            same = [i for i in items if _dirty(slug, i) == first]
+            if len(same) < len(items):
+                items = same                            # a mixed batch splits: the group of the oldest item goes first, the other next
         if enterprises.load(slug).get("top") == pos and enterprises.setting(slug, "top_decides"):
             same = bool(items[0].get("outside"))        # the top that decides for the owner never reads stranger text beside an owner-level request
             items = [i for i in items if bool(i.get("outside")) == same]
@@ -515,7 +549,7 @@ def _send_esc(slug: str, e: dict, note: str = "") -> None:
     deliver(slug, e["to"], "escalation",
             f"Escalation {e['id']} from {_label(slug, e['position'])}{note}: {e['text']}\n"
             f"Answer with `maxxing enterprise answer {e['id']} \"...\"`, or pass it up with `maxxing enterprise escalate`.",
-            sender=e["position"], task=e.get("task") or "", outside=bool(e.get("outside")))
+            sender=e["position"], task=e.get("task") or "", outside=bool(e.get("outside")), ref=f"esc:{e['id']}")
 
 
 def _new_esc(slug: str, pos: str, text: str, task: str, outside: bool, session: str, now: float, *,
@@ -608,12 +642,25 @@ def _climb(slug: str, esc_id: str, now: float, why: str) -> None:
             e = next((i for i in items if i.get("id") == esc_id and i.get("status") == "open"), None)
             if e is None or e["to"] != cur:
                 return
-            e["deadline"] = now + _timeout_s(slug, e["position"])
+            n = int(e.get("renewals") or 0) + 1
+            e["renewals"] = n
+            to_owner = n > RENEW_MAX                    # the top let it pass again and again: the owner decides now
+            if to_owner:
+                e["trail"] = [*e.get("trail", []), cur]
+                e["level"] = int(e.get("level", 0)) + 1
+                e["to"], e["deadline"] = "owner", None
+            else:
+                e["deadline"] = now + _timeout_s(slug, e["position"]) * 2 ** n      # back-off: each renewal waits twice as long
             _save_esc(slug, items)
             snap = dict(e)
-        enterprises.log(slug, "climb", f"Escalation {esc_id} stays with {cur} (top position): {why}", by="server",
-                        position=cur, task=snap.get("task") or "")
-        _send_esc(slug, snap, f" (still open: {why})")
+        if to_owner:
+            enterprises.log(slug, "climb", f"Escalation {esc_id} goes to the owner: the top position did not answer",
+                            by="server", position=cur, task=snap.get("task") or "")
+            _notify_esc(slug, snap)
+        else:
+            enterprises.log(slug, "climb", f"Escalation {esc_id} stays with {cur} (top position): {why}", by="server",
+                            position=cur, task=snap.get("task") or "")
+            _send_esc(slug, snap, f" (still open: {why})")      # one copy at a time: kept as is while it waits in the inbox
         enterprises.invalidate(slug)
         return
     nxt, skipped = _target(slug, cur)                   # agent gates and state reads: never under the lock
@@ -738,9 +785,10 @@ def assign(slug: str, from_pos: str, to_pos: str, deliverable: str, *, due: str 
         if to_pos in chain:
             raise EnterpriseError(409, "in_chain", f"{to_pos} is already in the chain of this work")
     if hops > limit:
-        _new_esc(slug, from_pos or to_pos, _t("hops_esc", limit=limit, what=deliverable),
-                 task or parent or "", outside, session, _now(), to_owner=True)
-        raise EnterpriseError(409, "too_many_hops", f"A task changes hands at most {limit} times: the owner was asked")
+        esc = _new_esc(slug, from_pos or to_pos, _t("hops_esc", limit=limit, what=deliverable),
+                       task or parent or "", outside, session, _now(), to_owner=True)
+        raise EnterpriseError(409, "too_many_hops", f"A task changes hands at most {limit} times: "
+                              + ("the owner was asked" if esc["to"] == "owner" else f"{esc['to']} was asked"))
     sub = {"id": slug, "owner": to_pos, "requester": e0.get("requester", "") if e0 else (from_pos or sender), "parent": (parent or "") if not e0 else e0.get("parent", ""),
            "deliverable": (e0 or {}).get("deliverable") or deliverable[:2000], "stage": "", "hops": hops,
            "outside": bool(outside), "chain": chain}
@@ -784,14 +832,15 @@ def _get_for(slug: str, pos: str, task_id: str) -> tuple[dict, dict] | None:
     return t, e
 
 
-def _tell_requester(slug: str, e: dict, kind: str, text: str, pos: str, task_id: str, title: str, outside: bool) -> None:
+def _tell_requester(slug: str, e: dict, kind: str, text: str, pos: str, task_id: str, title: str, outside: bool,
+                    session: str = "") -> None:
     req = e.get("requester") or ""
     rp = enterprises.position(slug, req) if req else None
     if rp and not rp.get("desk"):                       # the front desk position never runs on a hand-in: the owner hears it
-        _put(slug, req, kind, text, pos, task_id, outside, "")
-    else:
+        _put(slug, req, kind, text, pos, task_id, outside, session)
+    else:                                               # only the owner can accept it (requester: the owner, the desk): never muted
         _notify(slug, _t("task_title", name=_name(slug), title=title), text, url=f"/enterprises/{slug}/overview",
-                dedupe=f"task:{slug}:{task_id}:{kind}:{int(_now())}")
+                dedupe=f"task:{slug}:{task_id}:{kind}:{int(_now())}", always=True)
 
 
 def _reviewer(slug: str) -> str:
@@ -800,11 +849,12 @@ def _reviewer(slug: str) -> str:
     return r if isinstance(r, str) and r and enterprises.position(slug, r) else ""
 
 
-def _hand_in(slug: str, e: dict, t: dict, pos: str, task_id: str, summary: str) -> None:
-    """Tell the requester a contributor's work is ready to accept."""
+def _hand_in(slug: str, e: dict, t: dict, pos: str, task_id: str, summary: str, outside: bool = False,
+             session: str = "") -> None:
+    """Tell the requester a contributor's work is ready to accept (outside: the run that wrote it was)."""
     _tell_requester(slug, e, "handin", _t("handin_body", who=_label(slug, pos), title=t["title"], summary=summary,
                                           id=task_id, owner=e.get("owner") or pos), pos, task_id,
-                    _t("handin_title"), bool(e.get("outside")))
+                    _t("handin_title"), bool(e.get("outside")) or bool(outside), session)
 
 
 def release_reviews(slug: str) -> None:
@@ -815,13 +865,14 @@ def release_reviews(slug: str) -> None:
         e = _ent(t, slug)
         if e and e.get("stage") == "review_pending" and t.get("status") != "done":
             _task_call(_tasks().update_task, t["id"], {"enterprise": {**e, "stage": "review"}})
-            _hand_in(slug, e, t, e.get("owner") or "", t["id"], e.get("summary") or "")
+            _hand_in(slug, e, t, e.get("owner") or "", t["id"], e.get("summary") or "", bool(e.get("summary_outside")))
             enterprises.log(slug, "handin", f"No reviewer left: \"{t['title']}\" goes to its requester", by="server",
                             position=e.get("owner") or "", task=t["id"])
     enterprises.invalidate(slug)
 
 
-def review(slug: str, pos: str, task_id: str, decision: str, notes: str = "", *, session: str = "") -> dict:
+def review(slug: str, pos: str, task_id: str, decision: str, notes: str = "", *, session: str = "",
+           outside: bool = False) -> dict:
     """The reviewer approves (stage reviewed, then the usual hand-in to the requester) or asks for changes (stage
     changes, the task's owner hears the notes). -> the task."""
     pos = _who(pos)
@@ -843,7 +894,8 @@ def review(slug: str, pos: str, task_id: str, decision: str, notes: str = "", *,
                                                                          "review_notes": notes}})
         _hand_in(slug, {**e, "stage": "reviewed"}, t, owner, task_id,
                  (e.get("summary") or "") + (f" (reviewed by {_label(slug, pos)}: {notes})" if notes else
-                                             f" (reviewed by {_label(slug, pos)})"))
+                                             f" (reviewed by {_label(slug, pos)})"),
+                 bool(e.get("summary_outside")) or bool(outside))
         enterprises.log(slug, "review", f"{_label(slug, pos)} approves: {t['title']}", by=pos, position=owner,
                         task=task_id, session=session)
     else:
@@ -854,14 +906,14 @@ def review(slug: str, pos: str, task_id: str, decision: str, notes: str = "", *,
         if owner and enterprises.position(slug, owner):
             _put(slug, owner, "review", f"Changes wanted by {_label(slug, pos)} on \"{t['title']}\": {notes}\n"
                  f"Task {task_id}: hand it in again with `maxxing enterprise done {task_id} \"summary\"`.", pos, task_id,
-                 bool(e.get("outside")), "")
+                 bool(e.get("outside")) or bool(outside), "")
         enterprises.log(slug, "review", f"{_label(slug, pos)} asks for changes: {notes}", by=pos, position=owner,
                         task=task_id, session=session)
     enterprises.invalidate(slug)
     return row
 
 
-def done(slug: str, pos: str, task_id: str, summary: str, *, session: str = "") -> dict:
+def done(slug: str, pos: str, task_id: str, summary: str, *, session: str = "", outside: bool = False) -> dict:
     """The contributor hands in (stage review, the requester hears it); the requester (or the owner, pos "") accepts
     (status done). -> the task, or {"id", "missing": True} when it was deleted meanwhile."""
     pos = _who(pos)
@@ -884,17 +936,19 @@ def done(slug: str, pos: str, task_id: str, summary: str, *, session: str = "") 
             raise EnterpriseError(409, "open_children", f"{len(kids)} delegated tasks under this one are still open")
         reviewer = _reviewer(slug)
         if reviewer and reviewer != pos:
-            row = _task_call(api.update_task, task_id, {"enterprise": {**e, "stage": "review_pending", "summary": summary}})
+            row = _task_call(api.update_task, task_id, {"enterprise": {**e, "stage": "review_pending", "summary": summary,
+                                                                    "summary_outside": bool(outside)}})
             _put(slug, reviewer, "review", f"Review wanted: {_label(slug, pos)} hands in \"{t['title']}\": {summary}\n"
                  f"Task {task_id}: approve it with `maxxing enterprise review {task_id} approve \"notes\"`, or ask for "
                  f"changes with `maxxing enterprise review {task_id} changes \"notes\"`.", pos, task_id,
-                 bool(e.get("outside")), "")
+                 bool(e.get("outside")) or bool(outside), session)
             enterprises.log(slug, "handin", f"{_label(slug, pos)} hands in for review by {reviewer}: {summary or t['title']}",
                             by=pos, position=pos, task=task_id, session=session)
             enterprises.invalidate(slug)
             return row
-        row = _task_call(api.update_task, task_id, {"enterprise": {**e, "stage": "review", "summary": summary}})
-        _hand_in(slug, e, t, pos, task_id, summary)
+        row = _task_call(api.update_task, task_id, {"enterprise": {**e, "stage": "review", "summary": summary,
+                                                         "summary_outside": bool(outside)}})
+        _hand_in(slug, e, t, pos, task_id, summary, bool(outside), session)
         enterprises.log(slug, "handin", f"{_label(slug, pos)} hands in: {summary or t['title']}", by=pos, position=pos,
                         task=task_id, session=session)
     else:
@@ -903,7 +957,7 @@ def done(slug: str, pos: str, task_id: str, summary: str, *, session: str = "") 
     return row
 
 
-def block(slug: str, pos: str, task_id: str, reason: str, *, session: str = "") -> dict:
+def block(slug: str, pos: str, task_id: str, reason: str, *, session: str = "", outside: bool = False) -> dict:
     """The task's position cannot go on: stage blocked with the reason, the requester hears it."""
     pos = _who(pos)
     got = _get_for(slug, pos, task_id)
@@ -915,7 +969,7 @@ def block(slug: str, pos: str, task_id: str, reason: str, *, session: str = "") 
     reason = (reason or "").strip()[:600]
     row = _task_call(_tasks().update_task, task_id, {"enterprise": {**e, "stage": "blocked", "reason": reason}})
     _tell_requester(slug, e, "note", _t("blocked_body", title=t["title"], who=_label(slug, e.get("owner", "")), reason=reason), pos,
-                    task_id, _t("blocked_title"), bool(e.get("outside")))
+                    task_id, _t("blocked_title"), bool(e.get("outside")) or bool(outside), session)
     enterprises.log(slug, "block", f"{_label(slug, pos)} is blocked: {reason}", by=pos or "owner", position=e.get("owner", ""),
                     task=task_id, session=session)
     enterprises.invalidate(slug)
@@ -1054,7 +1108,7 @@ def _close_meeting(slug: str, mid: str, now: float) -> None:
              bool(snap.get("outside")) or any(r.get("outside") for r in snap["replies"]), "")
     else:
         _notify(slug, _t("minutes_title", name=_name(slug), topic=snap["topic"]), snap["minutes"],
-                url=f"/enterprises/{slug}/overview", dedupe=f"meeting:{slug}:{mid}")
+                url=f"/enterprises/{slug}/overview", dedupe=f"meeting:{slug}:{mid}", always=True)
     enterprises.invalidate(slug)
 
 
@@ -1107,17 +1161,26 @@ def _resume(now: float) -> None:
     config.write_json(f, {})
 
 
-def report_to_owner(slug: str, pos: str, text: str, *, session: str = "") -> dict:
-    """The top position tells the owner something (the one message that always reaches the owner in zero mode)."""
+def report_to_owner(slug: str, pos: str, text: str, *, session: str = "", outside: bool = False) -> dict:
+    """The top position tells the owner something (the one message that always reaches the owner in zero mode).
+    A run started by outside text is tagged as such; at most REPORT_MAX_PER_H messages an hour."""
     _chart(slug)
     text = (text or "").strip()
     if not text:
         raise EnterpriseError(400, "invalid", "text is required")
     if not pos or _top(slug) != pos:
         raise EnterpriseError(403, "not_top", "Only the top position reports to the owner")
-    text = agents._utf8(text)[:TEXT_MAX]
+    now = _now()
+    with enterprises._lock:
+        fl = _flow(slug)
+        recent = [float(x) for x in fl.get("reports") or [] if isinstance(x, (int, float)) and now - float(x) < 3600]
+        if len(recent) >= REPORT_MAX_PER_H:
+            raise EnterpriseError(429, "rate_limited", f"At most {REPORT_MAX_PER_H} reports to the owner an hour")
+        fl["reports"] = [*recent, now]
+        _save_flow(slug, fl)
+    text = (_t("outside_tag") if outside or _session_outside(session) else "") + agents._utf8(text)[:TEXT_MAX]
     _notify(slug, _t("report_title", name=_name(slug), who=_label(slug, pos)), text, url=f"/enterprises/{slug}/overview",
-            always=True, dedupe=f"report:{slug}:{pos}:{int(_now())}")
+            always=True, dedupe=f"report:{slug}:{pos}:{now:.3f}")
     enterprises.log(slug, "report", f"{_label(slug, pos)} reports to the owner: {text}", by=pos, position=pos, session=session)
     return {"ok": True}
 
@@ -1144,13 +1207,14 @@ def _task_line(slug: str, t: dict, e: dict, now: float) -> str:
 
 
 def stale_hours(slug: str) -> float:
-    """Hours without movement before the requester is woken (0 = never)."""
+    """Hours without movement before the requester is woken (0 = never): the stored `stale_h` when set, else 2 in zero
+    mode and off otherwise."""
     try:
         v = enterprises.setting(slug, "stale_h")
     except Exception:  # noqa: BLE001
         v = None
     if isinstance(v, bool) or not isinstance(v, (int, float)):
-        return STALE_ZERO_H if zero(slug) else STALE_H
+        return STALE_ZERO_H if zero(slug) else 0.0
     return max(0.0, float(v))
 
 
@@ -1162,56 +1226,97 @@ def _running_on(slug: str, pos: str) -> bool:
         return False
 
 
+def _nudge_state(v: Any) -> tuple[float, int]:
+    """(when, how many times) of a task's last nudges (a bare number from an older version counts as one)."""
+    if isinstance(v, dict):
+        return float(v.get("at") or 0), int(v.get("n") or 0)
+    return (float(v), 1) if isinstance(v, (int, float)) and not isinstance(v, bool) else (0.0, 0)
+
+
+def _fit(head: str, lines: list[str]) -> tuple[str, int]:
+    """The head and as many lines as fit in one delivery, then "and N more" -> (text, lines kept)."""
+    out, n = head, 0
+    for ln in lines:
+        more = f"\n(and {len(lines) - n - 1} more: see `maxxing enterprise tasks`)"
+        if len(out) + len(ln) + 1 + len(more) > TEXT_MAX - 100 and n < len(lines):
+            break
+        out += "\n" + ln
+        n += 1
+    if n < len(lines):
+        out += f"\n(and {len(lines) - n} more: see `maxxing enterprise tasks`)"
+    return out, n
+
+
 def _followups(slug: str, now: float) -> None:
-    """Wake the requester of a delegated task nobody moved for `stale_h` hours (once per task per period); in zero
-    mode the top position also gets one daily list of every open task."""
+    """Wake the requester of a delegated task nobody moved for `stale_h` hours, again after twice as long each time
+    (capped at a day); in zero mode the top position also gets one daily list of the open tasks (no title of a task
+    with outside content)."""
     hours = stale_hours(slug)
     fl = _flow(slug)
     nudged = fl.get("nudged") if isinstance(fl.get("nudged"), dict) else {}
     rows = _open_rows(slug)
-    due: dict[tuple[str, bool], list[str]] = {}
-    marks: list[str] = []
+    due: dict[tuple[str, bool], list[tuple[str, str]]] = {}
+    count: dict[str, int] = {}
     if hours:
+        cap = max(hours, STALE_CAP_H) * 3600
         for t, e in rows:
             req = e.get("requester") or ""
             rp = enterprises.position(slug, req) if req else None
             if not rp or rp.get("desk"):
                 continue
-            quiet = now - float(t.get("updated") or now)
-            if quiet < hours * 3600 or now - float(nudged.get(t["id"]) or 0) < hours * 3600:
+            upd = float(t.get("updated") or now)
+            at, n = _nudge_state(nudged.get(t["id"]))
+            if upd > at:
+                n = 0                                   # the task moved since: the back-off starts again
+            if now - upd < hours * 3600 or now - at < min(hours * 3600 * 2 ** n, cap):
                 continue
             if _running_on(slug, e.get("owner") or ""):
                 continue
-            due.setdefault((req, bool(e.get("outside"))), []).append(_task_line(slug, t, e, now))
-            marks.append(t["id"])
+            count[t["id"]] = n + 1
+            due.setdefault((req, bool(e.get("outside"))), []).append((t["id"], _task_line(slug, t, e, now)))
     top = _top(slug) if zero(slug) and rows else ""
-    top_text = ""
+    top_lines: list[str] = []
     if top and now - float(fl.get("top_followup") or 0) >= 86400:
-        top_text = "\n".join(_task_line(slug, t, e, now) for t, e in rows)
-    if not due and not top_text:
+        clean = [(t, e) for t, e in rows if not e.get("outside")]
+        top_lines = [_task_line(slug, t, e, now) for t, e in clean]
+        if len(clean) < len(rows):
+            top_lines.append("- " + _t("outside_tasks", n=len(rows) - len(clean)))
+    if not due and not top_lines:
         return
+    sent: dict[tuple[str, bool], str] = {}
+    marks: list[str] = []
+    for key, items in due.items():
+        text, kept = _fit("These tasks you delegated have not moved. Ask the owner of each how it goes (`maxxing enterprise "
+                          "escalate` when it stays stuck), decide at your level or accept what is ready:",
+                          [ln for _, ln in items])
+        sent[key] = text
+        marks += [tid for tid, _ in items[:kept]]
     with enterprises._lock:
         fl = _flow(slug)
         n2 = fl.get("nudged") if isinstance(fl.get("nudged"), dict) else {}
-        n2.update({tid: now for tid in marks})
+        for tid in marks:
+            n2[tid] = {"at": now, "n": count[tid]}
         live = {t["id"] for t, _ in rows}
         fl["nudged"] = {k: v for k, v in n2.items() if k in live}
-        if top_text:
+        if top_lines:
             fl["top_followup"] = now
         _save_flow(slug, fl)
-    for (req, outside), lines in due.items():
-        deliver(slug, req, "followup", "These tasks you delegated have not moved. Chase the owner (`maxxing enterprise "
-                "assign` again, `escalate`), decide at your level or accept what is ready:\n" + "\n".join(lines),
-                outside=outside)
-    if top_text:
-        deliver(slug, top, "followup", "Daily follow-up, every open delegated task of the enterprise (see "
-                "`maxxing enterprise tasks --all`):\n" + top_text)
+    for (req, outside), text in sent.items():
+        deliver(slug, req, "followup", text, outside=outside)
+    if top_lines:
+        text, _ = _fit("Daily follow-up, every open delegated task of the enterprise (see `maxxing enterprise tasks "
+                       "--all`):", top_lines)
+        deliver(slug, top, "followup", text)
 
 
-def _run_of(slug: str, t: dict, e: dict, metas: dict) -> dict | None:
+def _run_of(slug: str, t: dict, e: dict, metas: dict, seen_by: dict | None = None) -> dict | None:
     """The owner's latest run on the task ({session, running}) when a delivery about it started one."""
     owner = e.get("owner") or ""
-    runs = [i for i in seen(slug, owner) if i.get("task") == t["id"] and i.get("run")] if owner else []
+    if seen_by is None:
+        seen_by = {}
+    if owner and owner not in seen_by:
+        seen_by[owner] = seen(slug, owner)              # one read of the owner's seen file per call
+    runs = [i for i in seen_by.get(owner, []) if i.get("task") == t["id"] and i.get("run")] if owner else []
     if not runs:
         return None
     sid = runs[-1]["run"]
@@ -1224,9 +1329,13 @@ def _run_of(slug: str, t: dict, e: dict, metas: dict) -> dict | None:
     return {"session": sid, "running": any(m.get("id") == sid and m.get("state") == "running" for m in metas[path])}
 
 
-def tasks_view(slug: str, *, include_done: bool = False) -> list[dict]:
+OUTSIDE_TITLE = "[outside content]"
+
+
+def tasks_view(slug: str, *, include_done: bool = False, hide_outside: bool = False) -> list[dict]:
     """The delegated tasks of the enterprise, newest move first: id, title, owner, requester, status, stage, created,
-    updated, last_move, hops, outside, run."""
+    updated, last_move (epoch seconds, = updated), hops, outside, run. hide_outside: the title of a task with outside
+    content is replaced by a neutral label (a run that is not outside never reads a stranger's words)."""
     _chart(slug)
     try:
         rows = [(t, e) for t in list(_tasks().load(copy_=False)["tasks"]) if (e := _ent(t, slug))]
@@ -1235,14 +1344,16 @@ def tasks_view(slug: str, *, include_done: bool = False) -> list[dict]:
     done = sorted((r for r in rows if r[0].get("status") == "done"), key=lambda r: -float(r[0].get("updated") or 0))[:50]
     rows = [r for r in rows if r[0].get("status") != "done"] + (done if include_done else [])
     metas: dict = {}
+    seen_by: dict = {}
     out = []
     for t, e in rows:
         upd = float(t.get("updated") or t.get("created") or 0)
-        out.append({"id": t["id"], "title": t.get("title", ""), "owner": e.get("owner") or "",
+        out.append({"id": t["id"], "title": OUTSIDE_TITLE if hide_outside and e.get("outside") else t.get("title", ""),
+                    "owner": e.get("owner") or "",
                     "requester": e.get("requester") or "", "status": t.get("status") or "", "stage": e.get("stage") or "",
                     "created": float(t.get("created") or 0), "updated": upd, "last_move": upd,
                     "hops": int(e.get("hops") or 0), "outside": bool(e.get("outside")),
-                    "run": _run_of(slug, t, e, metas) if t.get("status") != "done" else None})
+                    "run": _run_of(slug, t, e, metas, seen_by) if t.get("status") != "done" else None})
     out.sort(key=lambda r: -r["updated"])
     return out
 
@@ -1310,7 +1421,10 @@ def tick(now: float | None = None) -> None:
         try:
             if enterprises.load(slug).get("broken"):
                 continue
-            _followups(slug, now)
+            try:
+                _followups(slug, now)
+            except Exception:  # noqa: BLE001 - a failing follow-up never skips the deliveries
+                logger.exception("followups %s", slug)
             for pos in _positions_waiting(slug):
                 _flush(slug, pos, now)
             _climb_waits(slug, now)
