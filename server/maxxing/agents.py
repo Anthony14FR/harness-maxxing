@@ -1282,6 +1282,8 @@ def delete(path: str) -> None:
     _drop_triggers([path])
     for ext in ("json", "jsonl"):
         _state_file(path, ext).unlink(missing_ok=True)
+    from . import enterprises
+    enterprises.agent_gone(path)
     _invalidate()
 
 
@@ -1455,6 +1457,11 @@ def remap(old_prefix: str, new_prefix: str) -> None:
         agent_rooms.remap(old_prefix, new_prefix)
     except Exception:
         log.exception("agent groups not moved (%s -> %s)", old_prefix, new_prefix)
+    try:                                                # org chart: positions follow their agents / project
+        from . import enterprises
+        enterprises.remap(old_prefix, new_prefix)
+    except Exception:
+        log.exception("enterprises not moved (%s -> %s)", old_prefix, new_prefix)
     try:                                                # change requests waiting for the owner: still its agent
         _remap_changes(old_prefix, new_prefix)
     except Exception:
