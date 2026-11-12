@@ -102,7 +102,7 @@ export const BUS_KEYS: Record<BusTopic, readonly (readonly unknown[])[]> = {
   team: [['team']],
   // an agent was created, changed or removed (templates and the sandbox check do not move with it); the groups show
   // the names, faces and switches of their members
-  agents: [['agents', 'list'], ['agents', 'one'], ['agents', 'thread'], ['agents', 'layout'], ['agent-groups', 'list'], ['agent-groups', 'one']],
+  agents: [['agents', 'list'], ['agents', 'one'], ['agents', 'thread'], ['agents', 'layout'], ['agent-groups', 'list'], ['agent-groups', 'one'], ['enterprises']],
   agents_layout: [['agents', 'layout']],
   // a group was created, changed or removed, or one of them spoke (its own topic below carries its messages)
   'agent-groups': [['agent-groups', 'list'], ['agent-groups', 'one']],
@@ -116,6 +116,8 @@ export const BUS_KEYS: Record<BusTopic, readonly (readonly unknown[])[]> = {
   browser: [['browser']],
   // a device paired, came online / went away, was paused, used by Claude or taken over; an ask_human on a device
   devices: [['devices']],
+  // an enterprise was created, changed or removed (its chart shows the state and cost of agents: `agents` refreshes it too)
+  enterprises: [['enterprises']],
 }
 
 /** Query keys of one bus topic: `agents:<path>` = that agent's thread or unread changed (a message, a feed event
@@ -129,6 +131,11 @@ export function busKeysOf(topic: string): readonly (readonly unknown[])[] {
   if (topic.startsWith('agent-groups:')) {
     const path = topic.slice(13)
     return [['agent-groups', 'list'], ['agent-groups', 'one', path], ['agent-groups', 'messages', path]]
+  }
+  /** `enterprises:<slug>` = that enterprise's chart, inboxes or decisions changed. */
+  if (topic.startsWith('enterprises:')) {
+    const slug = topic.slice(12)
+    return [['enterprises', 'list'], ['enterprises', 'one', slug], ['enterprises', 'inbox', slug], ['enterprises', 'decisions', slug]]
   }
   return BUS_KEYS[topic as BusTopic] || []
 }

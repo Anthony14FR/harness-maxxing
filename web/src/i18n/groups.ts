@@ -14,6 +14,7 @@ export const GROUPS = {
   git: ['git'],
   team: ['team'],
   agents: ['agents', 'groups'],
+  enterprises: ['ent'],
   mail: ['mail'],
   // the Harness Browser (Settings -> Features, topic menu, agent settings, live view)
   browser: ['browser'],
