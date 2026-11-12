@@ -13,6 +13,8 @@ Structure (the owner's: refused in every agent turn):
   maxxing enterprise report SLUG [--daily|--weekly|--monthly] [--now] [--json]   print the last report; --now builds one
   maxxing enterprise decisions SLUG [--since DATE] [--limit N] [--json]   the decision log
   maxxing enterprise export SLUG [-o FILE]  |  import FILE [--json]       the enterprise as a zip / from a zip
+  maxxing enterprise resume SLUG POSITION | --all-failed   tell a position to go through its open tasks (an agent: only
+                                                           the top in total autonomy, for its subtree)
 Readable by an agent of the enterprise (a sandboxed turn sees its own position, its lead and its reports only):
   maxxing enterprise show [SLUG] [--json]                  the chart as a tree, with every position's state
   maxxing enterprise profile [--section S] [--json]        the company profile (S: products, hours, terms, contact, faq)
@@ -79,6 +81,11 @@ def _configure(p) -> None:
         s.add_argument("slug")
         s.add_argument("projects", nargs="+")
         s.add_argument("--vacate", action="store_true", help="vacate the positions held by agents of an unlinked project")
+    s = sub.add_parser("resume", help="tell a position to resume its open tasks")
+    s.add_argument("slug")
+    s.add_argument("position", nargs="?", default="")
+    s.add_argument("--all-failed", action="store_true", help="every position whose state is failed")
+    s.add_argument("--json", action="store_true")
     s = sub.add_parser("show", help="the chart as a tree")
     s.add_argument("slug", nargs="?", default="")
     who(s)
@@ -433,6 +440,27 @@ def _settings(a) -> int:
     return _say(a, e, f"{a.slug}: settings updated")
 
 
+def _resume(a) -> int:
+    from . import enterprise_flow, enterprises
+    turn = _turn()
+    if bool(a.position) == bool(a.all_failed):
+        raise _Refused("Give a POSITION or --all-failed.")
+    targets = enterprise_flow.failed_positions(a.slug) if a.all_failed else [a.position]
+    if turn["path"]:
+        seat = enterprises.seat_of(turn["path"])
+        top = enterprises.load(a.slug).get("top")
+        if not (seat and seat[0] == a.slug and seat[1] == top and enterprise_flow.zero(a.slug)):
+            raise _Refused("`maxxing enterprise resume` is not allowed in an agent turn (only the top position, in "
+                           "total autonomy).")
+        mine = set(enterprises.subtree(a.slug, seat[1])) | {seat[1]}
+        if a.all_failed:
+            targets = [t for t in targets if t in mine]
+        if any(t not in mine for t in targets):
+            raise _Refused("The top position resumes positions of its own subtree only.")
+    done = [t for t in targets if enterprise_flow.resume_position(a.slug, t)]
+    return _say(a, {"resumed": done}, f"resumed: {', '.join(done) or 'nothing to do'}")
+
+
 def _grant(a) -> int:
     from . import enterprises
     import uuid
@@ -765,6 +793,8 @@ def _handler(a) -> int:
             return {"list": _list, "create": _create, "link": _link, "unlink": _link, "position": _position,
                     "settings": _settings, "grant": _grant, "report": _report, "decisions": _decisions,
                     "export": _export, "import": _import}[c](a)
+        if c == "resume":
+            return _resume(a)
         if c == "show":
             return _show(a)
         return _turn_cmd(a)

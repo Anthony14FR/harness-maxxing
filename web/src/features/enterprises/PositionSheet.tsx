@@ -14,7 +14,7 @@ import { SettingRow } from '@/features/common'
 import { AgentChatPanel } from '@/features/agents/AgentPage'
 import { HireDialog, NONE, leadOptions } from './dialogs'
 import { EscalationCard, RequestCard } from './Overview'
-import { STATE_TONE, stateText, inProjects, subtreeIds, useSavePosition } from './parts'
+import { ResumeButton, STATE_TONE, stateText, inProjects, subtreeIds, useSavePosition } from './parts'
 import { DeskSwitch, PositionWorkers, WorkerTemplateEditor } from './Workers'
 
 export function PositionSheet({ enterprise: e, positionId, onClose }: { enterprise: Enterprise; positionId: string | null; onClose: () => void }) {
@@ -51,6 +51,7 @@ function PanelBody({ enterprise: e, position: p, onClose }: { enterprise: Enterp
           <StatusDot tone={st.tone} pulse={st.pulse} />
           <span className="truncate" title={stateText(t, p)}>{stateText(t, p)}</span>
         </span>
+        <ResumeButton enterprise={e.id} position={p} />
         {(tab !== 'conversation' || !p.occupant) && close}
       </div>
       {p.occupant && (

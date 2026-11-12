@@ -376,3 +376,34 @@ def test_tasks_hide_outside_titles_from_a_clean_run_and_narrow_a_sandboxed_turn(
     monkeypatch.delenv("MAXXING_AGENT_OUTSIDE")
     code, out, _ = chart("tasks", "--as", "lead")
     assert "t_2" in out and seen[-1] is False
+
+
+# ---- resume ----------------------------------------------------------------------------------------------------
+def _kinds(pos):
+    return [i["kind"] for i in enterprises.inbox("acme-group", pos)]
+
+
+def test_resume_is_the_owners(chart, monkeypatch):
+    assert chart("resume", "acme-group", "writer")[0] == 0
+    assert _kinds("writer") == ["followup"]
+    assert chart("resume", "acme-group", "nobody")[0] == 2
+    assert chart("resume", "acme-group")[0] == 2                                          # a position or --all-failed
+    assert chart("resume", "acme-group", "--all-failed")[0] == 0                          # none failed: nothing to do
+    monkeypatch.setenv("MAXXING_AGENT", W)
+    code, _, err = chart("resume", "acme-group", "lead")
+    assert code == 2 and "not allowed in an agent turn" in err
+    assert _kinds("lead") == []
+
+
+def test_resume_by_the_top_in_total_autonomy_stays_in_its_subtree(chart, monkeypatch):
+    assert chart("settings", "acme-group", "top=lead")[0] == 0
+    monkeypatch.setenv("MAXXING_AGENT", R)
+    assert chart("resume", "acme-group", "writer")[0] == 2                                # not in total autonomy
+    monkeypatch.delenv("MAXXING_AGENT")
+    assert chart("settings", "acme-group", "zero_intervention=true")[0] == 0
+    chart("position", "add", "acme-group", "peer", "--title", "Peer")
+    monkeypatch.setenv("MAXXING_AGENT", R)
+    assert chart("resume", "acme-group", "writer")[0] == 0
+    code, _, err = chart("resume", "acme-group", "peer")
+    assert code == 2 and "subtree" in err
+    assert _kinds("writer") == ["followup"] and _kinds("peer") == []
