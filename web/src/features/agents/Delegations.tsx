@@ -10,17 +10,21 @@ import { Badge, Sensitive, StatusDot } from '@/components/ui'
 const STATE: Record<string, { label: TKey; variant: 'muted' | 'default' | 'warning' | 'success' }> = {
   todo: { label: 'agents.deleg.todo', variant: 'muted' },
   doing: { label: 'agents.deleg.doing', variant: 'default' },
+  assigned: { label: 'agents.deleg.assigned', variant: 'muted' },
+  handed: { label: 'agents.deleg.handed', variant: 'warning' },
   review: { label: 'agents.deleg.review', variant: 'warning' },
   blocked: { label: 'agents.deleg.blocked', variant: 'warning' },
   done: { label: 'agents.deleg.done', variant: 'success' },
 }
 
-/** inbox = waiting in the owner's inbox, doing = working, done = handed in, review = in review, blocked = blocked */
+/** todo = waiting in the inbox, assigned = given, doing = a run is on it, handed = handed in, review = in review, done = accepted */
 function stateOf(x: EnterpriseTask): string {
   if (x.status === 'done') return 'done'
   if (x.stage === 'blocked') return 'blocked'
-  if (x.stage === 'review' || x.stage === 'review_pending' || x.stage === 'changes') return 'review'
-  return x.status === 'doing' || x.status === 'in_progress' ? 'doing' : 'todo'
+  if (x.stage === 'review' || x.stage === 'reviewed') return 'handed'
+  if (x.stage === 'review_pending' || x.stage === 'changes') return 'review'
+  if (x.run?.running) return 'doing'
+  return x.status === 'doing' || x.status === 'in_progress' ? 'assigned' : 'todo'
 }
 
 /** The enterprise and position an agent sits in, if any (nothing while the feature is off). */

@@ -34,6 +34,7 @@ type Draft = {
   sharedKeys: string[]
   reviewBy: string
   timeout: string
+  stale: string
   limits: Record<keyof Settings['limits'], string>
   digest: Settings['digest'] & { hourText: string }
   weekly: boolean
@@ -76,6 +77,7 @@ function draftOf(e: Enterprise): Draft {
     sharedKeys: s.shared_keys || [],
     reviewBy: s.review_by || '',
     timeout: String(s.escalation_timeout_h),
+    stale: s.stale_h == null ? '' : String(s.stale_h),     // empty = the server's default (no follow-up unless total autonomy)
     limits: { depth: String(s.limits.depth), reports: String(s.limits.reports), workers_live: String(s.limits.workers_live), hops_per_task: String(s.limits.hops_per_task) },
     digest: { ...s.digest, hourText: String(s.digest.hour) },
     weekly: s.weekly,
@@ -105,10 +107,11 @@ function patchOf(e: Enterprise, d: Draft) {
     autonomy: d.autonomy,
     trust_chain: d.trust,
     top_decides: d.top === OWNER ? false : d.topDecides,
-    zero_intervention: d.zero,
+    zero_intervention: d.top === OWNER ? false : d.zero,
     shared_keys: d.sharedKeys,
     review_by: d.reviewBy,
     escalation_timeout_h: int(d.timeout, 1, 72, e.settings.escalation_timeout_h),
+    ...(d.stale.trim() === '' ? {} : { stale_h: int(d.stale, 0, 168, e.settings.stale_h ?? 4) }),
     limits: {
       depth: int(d.limits.depth, 1, 6, e.settings.limits.depth),
       reports: int(d.limits.reports, 1, 12, e.settings.limits.reports),
@@ -183,7 +186,7 @@ export function EnterpriseSettings({ enterprise: e }: { enterprise: Enterprise }
         <SettingsCard title={t('ent.settings.zero')} description={t('ent.settings.zeroDesc')}>
           <div className="divide-y">
             <SettingRow label={t('ent.settings.zeroSwitch')} description={d.top === OWNER ? t('ent.settings.zeroNoTop') : t('ent.settings.zeroHow')} htmlFor="ent-zero">
-              <Switch id="ent-zero" checked={d.zero && d.top !== OWNER} disabled={d.top === OWNER && !d.zero} onCheckedChange={(v) => set('zero', v)} data-testid="zero-intervention" />
+              <Switch id="ent-zero" checked={d.zero} disabled={d.top === OWNER && !d.zero} onCheckedChange={(v) => set('zero', v)} data-testid="zero-intervention" />
             </SettingRow>
           </div>
         </SettingsCard>
@@ -275,6 +278,9 @@ export function EnterpriseSettings({ enterprise: e }: { enterprise: Enterprise }
             </SettingRow>
             <SettingRow label={t('ent.settings.timeout')} description={t('ent.settings.timeoutDesc')} htmlFor="ent-timeout">
               <Input id="ent-timeout" inputMode="numeric" value={d.timeout} onChange={(ev) => set('timeout', ev.target.value)} className="w-24" />
+            </SettingRow>
+            <SettingRow label={t('ent.settings.stale')} description={t('ent.settings.staleDesc')} htmlFor="ent-stale">
+              <Input id="ent-stale" inputMode="numeric" value={d.stale} onChange={(ev) => set('stale', ev.target.value)} className="w-24" />
             </SettingRow>
           </div>
         </SettingsCard>

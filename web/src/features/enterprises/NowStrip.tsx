@@ -22,7 +22,7 @@ export function NowStrip({ enterprise: e }: { enterprise: Enterprise }) {
         <ul className="grid gap-1.5 sm:grid-cols-2 lg:grid-cols-3">
           {data.map((x) => {
             const tone = STATE_TONE[(x.state === 'queued' ? 'waiting' : x.state) as keyof typeof STATE_TONE] || STATE_TONE.idle
-            const task = typeof x.task === 'string' ? x.task : x.task?.title || ''
+            const task = x.task?.title || ''
             const body = (
               <>
                 <StatusDot tone={tone.tone} pulse={tone.pulse} label={t(tone.label)} className="mt-1.5 size-2 shrink-0" />

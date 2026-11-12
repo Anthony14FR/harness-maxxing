@@ -15,7 +15,7 @@ export const TASK_GROUPS: { id: TaskGroup; label: TKey }[] = [
 export function taskGroup(x: Pick<EnterpriseTask, 'status' | 'stage'>): TaskGroup {
   if (x.status === 'done') return 'done'
   if (x.stage === 'blocked') return 'blocked'
-  if (x.stage === 'review' || x.stage === 'review_pending' || x.stage === 'changes') return 'review'
+  if (x.stage === 'review' || x.stage === 'reviewed' || x.stage === 'review_pending' || x.stage === 'changes') return 'review'
   if (x.status === 'doing' || x.status === 'in_progress') return 'doing'
   return 'todo'
 }
