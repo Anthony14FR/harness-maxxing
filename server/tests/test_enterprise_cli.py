@@ -289,7 +289,7 @@ def test_structure_commands_are_refused_in_agent_turns(chart, monkeypatch):
 def test_sandboxed_turns_allow_the_work_commands():
     allowed = agent_guard.CLI_ALLOWED["enterprise"]
     assert allowed == {"assign", "done", "block", "escalate", "answer", "decide", "request", "objective", "show",
-                       "profile", "route", "worker"}
+                       "profile", "route", "worker", "meeting", "review"}
     assert not allowed & agent_guard.ENTERPRISE_OWNER_ONLY
 
 
@@ -298,3 +298,45 @@ def test_agent_turn_reports_outside(monkeypatch):
     assert agent_guard.agent_turn()["outside"] is False
     monkeypatch.setenv("MAXXING_AGENT_OUTSIDE", "1")
     assert agent_guard.agent_turn()["outside"] is True
+
+
+
+def test_hire_review_and_meeting_commands(chart, monkeypatch):
+    calls = []
+
+    def rec(name, ret):
+        def f(*a, **k):
+            calls.append((name, a, k))
+            return ret
+        return f
+    _fake(monkeypatch, "enterprise_policy", request=rec("request", {"id": "r_1", "status": "pending"}))
+    _fake(monkeypatch, "enterprise_flow", review=rec("review", {"id": "t_1"}),
+          start_meeting=rec("start", {"id": "m_1", "participants": ["writer"]}),
+          reply_meeting=rec("reply", {"id": "m_1", "participants": ["writer", "x"],
+                                      "replies": [{"position": "x", "text": "ok"}, {"position": "lead", "text": "mine"}]}))
+    monkeypatch.setenv("MAXXING_AGENT", R)
+    c = chart
+    assert c("request", "hire", "Need", "help", "--title", "Editor", "--department", "marketing", "--reports-to", "lead",
+             "--job", "Edits", "--topic", "projects/acme/topics/blog", "--name", "Ed", "--role", "You edit",
+             "--model", "sonnet", "--effort", "high")[0] == 0
+    assert calls[-1][2]["payload"] == {"title": "Editor", "department": "marketing", "reports_to": "lead", "job": "Edits",
+                                       "topic": "projects/acme/topics/blog", "name": "Ed", "role": "You edit",
+                                       "model": "sonnet", "effort": "high"}
+    assert calls[-1][1][3] == "Need help"
+    code, _, err = c("request", "hire", "x", "--title", "T")
+    assert code == 2 and "--topic" in err
+    assert c("review", "t_1", "changes", "too", "long")[0] == 0
+    assert calls[-1][1] == ("acme-group", "lead", "t_1", "changes", "too long")
+    with pytest.raises(SystemExit):
+        c("review", "t_1", "maybe")
+    assert c("meeting", "start", "Plan", "the", "launch", "--with", "writer, editor", "--hours", "2")[0] == 0
+    assert calls[-1][1] == ("acme-group", "lead", "Plan the launch", ["writer", "editor"])
+    assert calls[-1][2]["hours"] == 2.0
+    code, out, _ = c("meeting", "reply", "m_1", "fine")
+    assert code == 0 and "- x: ok" in out and "mine" not in out
+    monkeypatch.delenv("MAXXING_AGENT")
+    assert c("review", "t_1", "approve")[0] == 2                              # the owner must say which position
+
+
+def test_meeting_and_review_are_allowed_in_a_sandboxed_turn():
+    assert {"meeting", "review"} <= agent_guard.CLI_ALLOWED["enterprise"]

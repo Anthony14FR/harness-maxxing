@@ -23,7 +23,8 @@ from .enterprises import EnterpriseError
 
 logger = logging.getLogger("maxxing.enterprise_flow")
 
-KINDS = ("assign", "handin", "escalation", "answer", "request", "decision", "note")
+KINDS = ("assign", "handin", "escalation", "answer", "request", "decision", "note", "review", "meeting",
+         "meeting_minutes")
 DOWN = ("assign", "answer", "decision")             # orders from a lead: clear text when the chain is trusted
 TEXT_MAX = 4000
 INBOX_MAX = 500
@@ -31,7 +32,29 @@ SEEN_KEEP = 50
 ESC_KEEP = 200
 HARD = ("disabled", "budget", "missing", "envelope", "vacant")     # an escalation skips a position in this state
 WORD = {"assign": "Assignment", "handin": "Hand-in", "escalation": "Escalation", "answer": "Answer",
-        "request": "Request", "decision": "Decision", "note": "Note"}
+        "request": "Request", "decision": "Decision", "note": "Note", "review": "Review", "meeting": "Meeting",
+        "meeting_minutes": "Meeting minutes"}
+MEETING_H = 4.0                                     # default hours before a meeting closes with the replies it has
+MEETING_KEEP = 100
+TEXTS = {                                           # owner-facing notification texts (language setting, English fallback)
+    "esc_title": {"en": "{name}: {who} needs an answer", "fr": "{name} : {who} attend une réponse"},
+    "handin_title": {"en": "Hand-in to review", "fr": "Livrable à relire"},
+    "blocked_title": {"en": "Task blocked", "fr": "Tâche bloquée"},
+    "task_title": {"en": "{name}: {title}", "fr": "{name} : {title}"},
+    "minutes_title": {"en": "{name}: minutes of the meeting \"{topic}\"", "fr": "{name} : compte rendu de la réunion \"{topic}\""},
+    "minutes_head": {"en": "Meeting \"{topic}\" is closed ({n} of {total} replied).",
+                     "fr": "La réunion \"{topic}\" est close ({n} réponses sur {total})."},
+    "no_reply": {"en": "no reply", "fr": "pas de réponse"},
+}
+
+
+def _t(key: str, **kw: Any) -> str:
+    try:
+        lang = config.load_config().get("language", "en")
+    except Exception:  # noqa: BLE001
+        lang = "en"
+    row = TEXTS[key]
+    return row.get(lang, row["en"]).format(**kw)
 
 _flush_lock = threading.Lock()                      # one delivery run at a time (timer thread, tick)
 _timers: dict[tuple[str, str], threading.Timer] = {}
@@ -186,6 +209,18 @@ def _why_not(path: str) -> str | None:
         logger.exception("gate %s", path)
         return "missing"
     return None
+
+
+def _unfit(slug: str, pos: str, p: dict) -> str | None:
+    """"untrusted_unfit" when the position runs outside code and its occupant is not protected (the model's check)."""
+    if not p.get("untrusted_code"):
+        return None
+    f = _fn("enterprises", "untrusted_unfit")
+    try:
+        return "untrusted_unfit" if f and f(slug, pos) else None
+    except Exception:  # noqa: BLE001 - a failing check never starts an unprotected run
+        logger.exception("untrusted_unfit")
+        return "untrusted_unfit"
 
 
 def _hard(slug: str, pos: str) -> str | None:
@@ -356,7 +391,7 @@ def _flush(slug: str, pos: str, now: float) -> str:
             return _wait(slug, pos, now, "vacant")
         if now < float(items[0].get("at") or 0) + _debounce(path):
             return "pending"
-        why = _why_not(path)
+        why = _why_not(path) or _unfit(slug, pos, p)
         if why:
             return _wait(slug, pos, now, why)
         outside = any(i.get("outside") for i in items)
@@ -407,7 +442,7 @@ def _log_skips(slug: str, asker: str, skipped: list[tuple[str, str]]) -> None:
 
 
 def _notify_esc(slug: str, e: dict) -> None:
-    _notify(slug, f"{_name(slug)}: {_label(slug, e['position'])} needs an answer", e["text"], level="warning",
+    _notify(slug, _t("esc_title", name=_name(slug), who=_label(slug, e["position"])), e["text"], level="warning",
             url=f"/enterprises/{slug}/overview", ref=f"enterprise:esc:{slug}:{e['id']}",
             actions=[{"id": "open", "label": "Open", "style": "link"}], dedupe=f"esc:{slug}:{e['id']}")
 
@@ -675,8 +710,62 @@ def _tell_requester(slug: str, e: dict, kind: str, text: str, pos: str, task_id:
     if rp and not rp.get("desk"):                       # the front desk position never runs on a hand-in: the owner hears it
         _put(slug, req, kind, text, pos, task_id, outside, "")
     else:
-        _notify(slug, f"{_name(slug)}: {title}", text, url=f"/enterprises/{slug}/overview",
+        _notify(slug, _t("task_title", name=_name(slug), title=title), text, url=f"/enterprises/{slug}/overview",
                 dedupe=f"task:{slug}:{task_id}:{kind}:{int(_now())}")
+
+
+def _reviewer(slug: str) -> str:
+    """The `review_by` position when it exists, else "" (no review step)."""
+    r = enterprises.setting(slug, "review_by")
+    return r if isinstance(r, str) and r and enterprises.position(slug, r) else ""
+
+
+def _hand_in(slug: str, e: dict, t: dict, pos: str, task_id: str, summary: str) -> None:
+    """Tell the requester a contributor's work is ready to accept."""
+    _tell_requester(slug, e, "handin", f"Hand-in from {_label(slug, pos)} for \"{t['title']}\": {summary}\n"
+                    f"Accept it with `maxxing enterprise done {task_id}`, or send it back with "
+                    f"`maxxing enterprise assign {e.get('owner') or pos} \"notes\" --task {task_id}`.", pos, task_id,
+                    _t("handin_title"), bool(e.get("outside")))
+
+
+def review(slug: str, pos: str, task_id: str, decision: str, notes: str = "", *, session: str = "") -> dict:
+    """The reviewer approves (stage reviewed, then the usual hand-in to the requester) or asks for changes (stage
+    changes, the task's owner hears the notes). -> the task."""
+    pos = _who(pos)
+    if decision not in ("approve", "changes"):
+        raise EnterpriseError(400, "invalid", "decision is approve or changes")
+    got = _get_for(slug, pos, task_id)
+    if got is None:
+        return {"id": task_id, "missing": True}
+    t, e = got
+    reviewer = _reviewer(slug)
+    if not pos or pos != reviewer:
+        raise EnterpriseError(403, "not_reviewer", "Only the reviewer position reviews a hand-in")
+    if e.get("stage") != "review_pending":
+        raise EnterpriseError(409, "not_pending", "This task is not waiting for a review")
+    notes = (notes or "").strip()[:2000]
+    owner = e.get("owner") or ""
+    if decision == "approve":
+        row = _task_call(_tasks().update_task, task_id, {"enterprise": {**e, "stage": "reviewed", "reviewed_by": pos,
+                                                                         "review_notes": notes}})
+        _hand_in(slug, {**e, "stage": "reviewed"}, t, owner, task_id,
+                 (e.get("summary") or "") + (f" (reviewed by {_label(slug, pos)}: {notes})" if notes else
+                                             f" (reviewed by {_label(slug, pos)})"))
+        enterprises.log(slug, "review", f"{_label(slug, pos)} approves: {t['title']}", by=pos, position=owner,
+                        task=task_id, session=session)
+    else:
+        if not notes:
+            raise EnterpriseError(400, "invalid", "notes are required when asking for changes")
+        row = _task_call(_tasks().update_task, task_id, {"status": "doing", "enterprise": {**e, "stage": "changes",
+                                                                                           "review_notes": notes}})
+        if owner and enterprises.position(slug, owner):
+            _put(slug, owner, "review", f"Changes wanted by {_label(slug, pos)} on \"{t['title']}\": {notes}\n"
+                 f"Task {task_id}: hand it in again with `maxxing enterprise done {task_id} \"summary\"`.", pos, task_id,
+                 bool(e.get("outside")), "")
+        enterprises.log(slug, "review", f"{_label(slug, pos)} asks for changes: {notes}", by=pos, position=owner,
+                        task=task_id, session=session)
+    enterprises.invalidate(slug)
+    return row
 
 
 def done(slug: str, pos: str, task_id: str, summary: str, *, session: str = "") -> dict:
@@ -698,11 +787,19 @@ def done(slug: str, pos: str, task_id: str, summary: str, *, session: str = "") 
                 and x.get("status") != "done"]
         if kids:
             raise EnterpriseError(409, "open_children", f"{len(kids)} delegated tasks under this one are still open")
+        reviewer = _reviewer(slug)
+        if reviewer and reviewer != pos:
+            row = _task_call(api.update_task, task_id, {"enterprise": {**e, "stage": "review_pending", "summary": summary}})
+            _put(slug, reviewer, "review", f"Review wanted: {_label(slug, pos)} hands in \"{t['title']}\": {summary}\n"
+                 f"Task {task_id}: approve it with `maxxing enterprise review {task_id} approve \"notes\"`, or ask for "
+                 f"changes with `maxxing enterprise review {task_id} changes \"notes\"`.", pos, task_id,
+                 bool(e.get("outside")), "")
+            enterprises.log(slug, "handin", f"{_label(slug, pos)} hands in for review by {reviewer}: {summary or t['title']}",
+                            by=pos, position=pos, task=task_id, session=session)
+            enterprises.invalidate(slug)
+            return row
         row = _task_call(api.update_task, task_id, {"enterprise": {**e, "stage": "review", "summary": summary}})
-        _tell_requester(slug, e, "handin", f"Hand-in from {_label(slug, pos)} for \"{t['title']}\": {summary}\n"
-                        f"Accept it with `maxxing enterprise done {task_id}`, or send it back with "
-                        f"`maxxing enterprise assign {pos} \"notes\" --task {task_id}`.", pos, task_id,
-                        "Hand-in to review", bool(e.get("outside")))
+        _hand_in(slug, e, t, pos, task_id, summary)
         enterprises.log(slug, "handin", f"{_label(slug, pos)} hands in: {summary or t['title']}", by=pos, position=pos,
                         task=task_id, session=session)
     else:
@@ -723,11 +820,152 @@ def block(slug: str, pos: str, task_id: str, reason: str, *, session: str = "") 
     reason = (reason or "").strip()[:600]
     row = _task_call(_tasks().update_task, task_id, {"enterprise": {**e, "stage": "blocked", "reason": reason}})
     _tell_requester(slug, e, "note", f"Blocked: \"{t['title']}\" ({_label(slug, e.get('owner', ''))}): {reason}", pos,
-                    task_id, "Task blocked", bool(e.get("outside")))
+                    task_id, _t("blocked_title"), bool(e.get("outside")))
     enterprises.log(slug, "block", f"{_label(slug, pos)} is blocked: {reason}", by=pos or "owner", position=e.get("owner", ""),
                     task=task_id, session=session)
     enterprises.invalidate(slug)
     return row
+
+
+# ---- meetings ---------------------------------------------------------------------------------------------------
+def _meet_items(slug: str) -> list[dict]:
+    items = _json(enterprises.state(slug) / "meetings.json", {}).get("items")
+    return [i for i in items if isinstance(i, dict)] if isinstance(items, list) else []
+
+
+def _save_meet(slug: str, items: list[dict]) -> None:
+    closed = [i for i in items if i.get("status") != "open"][-MEETING_KEEP:]
+    keep = [i for i in items if i.get("status") == "open"] + closed
+    keep.sort(key=lambda i: i.get("at") or 0)
+    config.write_json(enterprises.state(slug) / "meetings.json", {"items": keep})
+
+
+def meetings(slug: str) -> list[dict]:
+    """Newest first."""
+    return sorted(_meet_items(slug), key=lambda i: i.get("at") or 0, reverse=True)
+
+
+def meeting(slug: str, mid: str) -> dict:
+    m = next((i for i in _meet_items(slug) if i.get("id") == mid), None)
+    if m is None:
+        raise EnterpriseError(404, "not_found", f"Meeting {mid!r} not found")
+    return m
+
+
+def _is_lead(slug: str, pos: str) -> bool:
+    return bool(enterprises.reports_of(slug, pos)) or enterprises.load(slug).get("top") == pos
+
+
+def start_meeting(slug: str, organizer: str, topic: str, participants: list[str], *, hours: float | None = None,
+                  session: str = "", outside: bool = False) -> dict:
+    """A lead (or the owner: organizer "") asks positions for their view -> the meeting. Replies are collected until all
+    answered or the deadline, then the organizer gets the minutes."""
+    organizer = _who(organizer)
+    d = _chart(slug)
+    topic = (topic or "").strip()
+    if not topic:
+        raise EnterpriseError(400, "invalid", "the topic is required")
+    who = list(dict.fromkeys(p for p in (participants or []) if p))
+    if not who:
+        raise EnterpriseError(400, "invalid", "at least one participant is required")
+    for p in who:
+        _need(slug, p)
+    if organizer:
+        _need(slug, organizer)
+        if organizer in who:
+            raise EnterpriseError(400, "invalid", "The organizer does not invite itself")
+        if not _is_lead(slug, organizer):
+            raise EnterpriseError(403, "not_lead", "Only a lead (or the owner) starts a meeting")
+        if d.get("top") != organizer:
+            sub = set(enterprises.subtree(slug, organizer))
+            out = [p for p in who if p not in sub or p == organizer]
+            if out:
+                raise EnterpriseError(403, "not_in_subtree", f"{', '.join(out)} is not under {organizer}")
+    try:
+        h = float(hours) if hours is not None else MEETING_H
+    except (TypeError, ValueError):
+        raise EnterpriseError(400, "invalid", "hours is a number") from None
+    if h <= 0 or h > 168:
+        raise EnterpriseError(400, "invalid", "hours is between 0 and 168")
+    now = _now()
+    m = {"id": "m_" + secrets.token_hex(3), "topic": agents._utf8(topic)[:TEXT_MAX], "organizer": organizer,
+         "participants": who, "status": "open", "replies": [], "minutes": "", "at": now, "deadline": now + h * 3600,
+         "outside": bool(outside)}
+    with enterprises._lock:
+        items = _meet_items(slug)
+        items.append(m)
+        _save_meet(slug, items)
+    enterprises.log(slug, "meeting", f"{_label(slug, organizer)} calls a meeting with {', '.join(who)}: {m['topic']}",
+                    by=organizer or "owner", position=organizer, session=session)
+    for p in who:
+        _put(slug, p, "meeting", f"Meeting {m['id']} called by {_label(slug, organizer)}: {m['topic']}\n"
+             f"Give your view with `maxxing enterprise meeting reply {m['id']} \"...\"` (before "
+             f"{time.strftime('%Y-%m-%d %H:%M', time.localtime(m['deadline']))}).", organizer, "", outside, session)
+    enterprises.invalidate(slug)
+    return m
+
+
+def reply_meeting(slug: str, pos: str, mid: str, text: str, *, session: str = "") -> dict:
+    """A participant answers once -> the meeting with the replies so far (the last reply closes it)."""
+    pos = _who(pos)
+    _chart(slug)
+    text = (text or "").strip()
+    if not text:
+        raise EnterpriseError(400, "invalid", "text is required")
+    with enterprises._lock:
+        items = _meet_items(slug)
+        m = next((i for i in items if i.get("id") == mid), None)
+        if m is None:
+            raise EnterpriseError(404, "not_found", f"Meeting {mid!r} not found")
+        if m.get("status") != "open":
+            raise EnterpriseError(409, "closed", "This meeting is closed")
+        if pos not in m["participants"]:
+            raise EnterpriseError(403, "not_invited", "Only the invited positions reply")
+        if any(r["position"] == pos for r in m["replies"]):
+            raise EnterpriseError(409, "replied", "You already replied to this meeting")
+        m["replies"].append({"position": pos, "text": agents._utf8(text)[:TEXT_MAX], "at": _now()})
+        _save_meet(slug, items)
+        snap = {**m, "replies": list(m["replies"])}
+    enterprises.log(slug, "meeting_reply", f"{_label(slug, pos)} replies on {mid}: {text}", by=pos, position=pos,
+                    session=session)
+    if len(snap["replies"]) >= len(snap["participants"]):
+        _close_meeting(slug, mid, _now())
+    enterprises.invalidate(slug)
+    return snap
+
+
+def _minutes(slug: str, m: dict) -> str:
+    said = {r["position"]: r["text"] for r in m["replies"]}
+    lines = [_t("minutes_head", topic=m["topic"], n=len(said), total=len(m["participants"]))]
+    lines += [f"- {_label(slug, p)}: {said.get(p) or _t('no_reply')}" for p in m["participants"]]
+    return "\n".join(lines)
+
+
+def _close_meeting(slug: str, mid: str, now: float) -> None:
+    """Close once (the replies or the deadline, whichever comes first), then hand the minutes to the organizer."""
+    with enterprises._lock:
+        items = _meet_items(slug)
+        m = next((i for i in items if i.get("id") == mid and i.get("status") == "open"), None)
+        if m is None:
+            return
+        m["status"], m["closed_at"] = "closed", now
+        m["minutes"] = _minutes(slug, m)
+        _save_meet(slug, items)
+        snap = dict(m)
+    enterprises.log(slug, "meeting", f"Meeting closed: {snap['topic']}", by="server", position=snap["organizer"])
+    org = snap["organizer"]
+    if org and enterprises.position(slug, org):
+        _put(slug, org, "meeting_minutes", snap["minutes"], "", "", bool(snap.get("outside")), "")
+    else:
+        _notify(slug, _t("minutes_title", name=_name(slug), topic=snap["topic"]), snap["minutes"],
+                url=f"/enterprises/{slug}/overview", dedupe=f"meeting:{slug}:{mid}")
+    enterprises.invalidate(slug)
+
+
+def _close_due_meetings(slug: str, now: float) -> None:
+    for m in _meet_items(slug):
+        if m.get("status") == "open" and m.get("deadline") is not None and now >= float(m["deadline"]):
+            _close_meeting(slug, m["id"], now)
 
 
 # ---- the tick ----------------------------------------------------------------------------------------------------
@@ -762,6 +1000,12 @@ def _resume(now: float) -> None:
                         i["deadline"] = float(i["deadline"]) + gap
                 if any(i.get("status") == "open" for i in items):
                     _save_esc(slug, items)
+                meets = _meet_items(slug)
+                for m in meets:
+                    if m.get("status") == "open" and m.get("deadline") is not None:
+                        m["deadline"] = float(m["deadline"]) + gap
+                if any(m.get("status") == "open" for m in meets):
+                    _save_meet(slug, meets)
         except Exception:  # noqa: BLE001
             logger.exception("resume %s", slug)
     config.write_json(f, {})
@@ -791,6 +1035,7 @@ def tick(now: float | None = None) -> None:
                 _flush(slug, pos, now)
             _climb_waits(slug, now)
             _climb_escalations(slug, now)
+            _close_due_meetings(slug, now)
         except Exception:  # noqa: BLE001 - one enterprise never stops the others
             logger.exception("flow tick %s", slug)
 

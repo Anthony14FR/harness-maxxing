@@ -580,3 +580,131 @@ def test_climb_rechecks_after_computing_the_target(ent, notes):
     finally:
         flow._target = real
     assert flow.escalations(S)[0]["status"] == "answered" and flow.escalations(S)[0]["to"] == "writer"
+
+
+
+# ---- untrusted code, review, meetings ----------------------------------------------------------------------
+def test_an_unfit_occupant_of_an_untrusted_position_gets_nothing_started(ent, monkeypatch):
+    real = enterprises.position
+    monkeypatch.setattr(enterprises, "position",
+                        lambda slug, pos: {**real(slug, pos), "untrusted_code": True} if pos == "writer" else real(slug, pos))
+    monkeypatch.setattr(enterprises, "untrusted_unfit", lambda slug, pos: ["not sandboxed"])
+    n = len(_calls())
+    flow.deliver(S, "writer", "assign", "NOTOOL build the PR", sender="ceo")
+    flow.tick(time.time() + 1)
+    time.sleep(0.2)
+    assert len(_calls()) == n and len(_inbox("writer")) == 1
+    assert json.loads((enterprises.state(S) / "flow.json").read_text())["waits"]["writer"]["why"] == "untrusted_unfit"
+    monkeypatch.setattr(enterprises, "untrusted_unfit", lambda slug, pos: [])
+    flow.tick(time.time() + 2)
+    wait_for(lambda: len(_calls()) == n + 1)
+
+
+def _review_on(by="editor"):
+    enterprises.update(S, {"settings": {"review_by": by}})
+
+
+def test_review_approve_then_the_requester_hears_it(ent):
+    _review_on()
+    t = flow.assign(S, "ceo", "writer", "Draft")
+    r = flow.done(S, "writer", t["id"], "v1 in drafts/")
+    assert r["enterprise"]["stage"] == "review_pending"
+    assert not [i for i in _inbox("ceo") if i["kind"] == "handin"]
+    (rv,) = [i for i in _inbox("editor") if i["kind"] == "review"]
+    assert rv["task"] == t["id"] and "v1 in drafts/" in rv["text"]
+    for who in ("writer", "ceo", ""):
+        with pytest.raises(EnterpriseError) as x:
+            flow.review(S, who, t["id"], "approve")
+        assert x.value.status == 403
+    r = flow.review(S, "editor", t["id"], "approve", "good")
+    assert r["enterprise"]["stage"] == "reviewed"
+    (h,) = [i for i in _inbox("ceo") if i["kind"] == "handin"]
+    assert "v1 in drafts/" in h["text"] and "good" in h["text"]
+    with pytest.raises(EnterpriseError) as x:
+        flow.review(S, "editor", t["id"], "approve")
+    assert x.value.status == 409
+    assert flow.done(S, "ceo", t["id"], "")["status"] == "done"
+
+
+def test_review_changes_go_back_to_the_task_owner(ent):
+    _review_on()
+    t = flow.assign(S, "ceo", "writer", "Draft")
+    flow.done(S, "writer", t["id"], "v1")
+    with pytest.raises(EnterpriseError) as x:
+        flow.review(S, "editor", t["id"], "changes", "")
+    assert x.value.status == 400
+    r = flow.review(S, "editor", t["id"], "changes", "shorter intro")
+    assert r["enterprise"]["stage"] == "changes" and r["status"] == "doing"
+    back = [i for i in _inbox("writer") if i["kind"] == "review"]
+    assert back and "shorter intro" in back[-1]["text"] and back[-1]["task"] == t["id"]
+    assert flow.done(S, "writer", t["id"], "v2")["enterprise"]["stage"] == "review_pending"
+
+
+def test_no_review_when_the_owner_of_the_task_is_the_reviewer(ent):
+    _review_on("writer")
+    t = flow.assign(S, "ceo", "writer", "Draft")
+    assert flow.done(S, "writer", t["id"], "v1")["enterprise"]["stage"] == "review"
+    assert [i for i in _inbox("ceo") if i["kind"] == "handin"]
+
+
+def test_meeting_closes_when_everybody_replied(ent, notes):
+    m = flow.start_meeting(S, "ceo", "Plan the launch", ["writer", "editor"])
+    assert m["status"] == "open" and m["organizer"] == "ceo"
+    assert all([i for i in _inbox(p) if i["kind"] == "meeting"] for p in ("writer", "editor"))
+    with pytest.raises(EnterpriseError) as x:
+        flow.reply_meeting(S, "intern", m["id"], "me too")
+    assert x.value.status == 403
+    r = flow.reply_meeting(S, "writer", m["id"], "Two weeks")
+    assert len(r["replies"]) == 1 and flow.meeting(S, m["id"])["status"] == "open"
+    with pytest.raises(EnterpriseError) as x:
+        flow.reply_meeting(S, "writer", m["id"], "again")
+    assert x.value.status == 409
+    flow.reply_meeting(S, "editor", m["id"], "Three weeks")
+    got = flow.meeting(S, m["id"])
+    assert got["status"] == "closed" and "Two weeks" in got["minutes"] and "Three weeks" in got["minutes"]
+    (mm,) = [i for i in _inbox("ceo") if i["kind"] == "meeting_minutes"]
+    assert "Two weeks" in mm["text"]
+    with pytest.raises(EnterpriseError) as x:
+        flow.reply_meeting(S, "editor", m["id"], "late")
+    assert x.value.status == 409
+
+
+def test_meeting_deadline_and_owner_minutes(ent, notes):
+    m = flow.start_meeting(S, "", "Budget", ["writer", "editor"], hours=1)
+    flow.reply_meeting(S, "writer", m["id"], "Fine")
+    flow.tick(time.time() + 1800)
+    assert flow.meeting(S, m["id"])["status"] == "open"
+    flow.tick(time.time() + 7200)
+    got = flow.meeting(S, m["id"])
+    assert got["status"] == "closed" and "Fine" in got["minutes"] and "no reply" in got["minutes"]
+    assert notes and "Budget" in notes[-1]["title"] and "Fine" in notes[-1]["body"]
+
+
+def test_meeting_rules(ent):
+    with pytest.raises(EnterpriseError) as x:
+        flow.start_meeting(S, "editor", "x", ["writer"])                    # not a lead
+    assert x.value.status == 403
+    with pytest.raises(EnterpriseError) as x:
+        flow.start_meeting(S, "writer", "x", ["editor"])                    # outside its subtree
+    assert x.value.status == 403
+    assert flow.start_meeting(S, "writer", "x", ["intern"])["participants"] == ["intern"]
+    assert flow.start_meeting(S, "ceo", "x", ["intern"])["id"]              # the top invites anyone below
+    for bad in ((" ", ["writer"]), ("x", []), ("x", ["ghost"])):
+        with pytest.raises(EnterpriseError):
+            flow.start_meeting(S, "ceo", *bad)
+
+
+def test_meeting_routes(ent):
+    m = flow.start_meeting(S, "ceo", "Plan", ["writer"])
+    items = ent.get(f"{E}/{S}/meetings").json()["items"]
+    assert [i["id"] for i in items] == [m["id"]]
+    one = ent.get(f"{E}/{S}/meetings/{m['id']}").json()
+    assert one["topic"] == "Plan" and one["status"] == "open" and one["replies"] == [] and one["participants"] == ["writer"]
+    assert ent.get(f"{E}/{S}/meetings/m_nope").status_code == 404
+
+
+def test_notification_texts_follow_the_language(ent, notes):
+    assert ent.put("/api/settings", json={"language": "fr"}).status_code == 200
+    flow.start_meeting(S, "", "Budget", ["writer"], hours=1)
+    flow.tick(time.time() + 7200)
+    assert "compte rendu" in notes[-1]["title"] and "pas de réponse" in notes[-1]["body"]
