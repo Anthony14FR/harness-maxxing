@@ -224,7 +224,9 @@ function UntrustedSwitch({ enterprise: e, position: p }: { enterprise: Enterpris
   const { save, pending } = useSavePosition(e)
   const o = p.occupant
   const reasons: string[] = []
-  if (p.untrusted_code && o && !o.sandbox) reasons.push(t('ent.untrusted.reason.sandbox'))
+  const why = p.untrusted_unfit || []
+  if (p.untrusted_code && o && (why.includes('not_sandboxed') || (!why.length && !o.sandbox))) reasons.push(t('ent.untrusted.reason.sandbox'))
+  if (p.untrusted_code && o && why.includes('holds_keys')) reasons.push(t('ent.untrusted.reason.keys'))
   return (
     <div className="grid gap-2" data-testid="untrusted-code">
       <SettingRow label={t('ent.untrusted.label')} description={t('ent.untrusted.desc')} htmlFor="ent-position-untrusted">
