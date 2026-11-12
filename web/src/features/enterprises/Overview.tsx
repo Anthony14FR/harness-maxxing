@@ -13,6 +13,7 @@ import { fmtCost } from '@/pages/sessions/util'
 import { Badge, Button, EmptyState, Input, Sensitive, Skeleton, Textarea, toast } from '@/components/ui'
 import { Markdown } from '@/components/ui/markdown'
 import { SectionStack, SettingsCard } from '@/pages/settings/sections/ui'
+import { Meetings } from './Meetings'
 
 export function Overview({ enterprise: e }: { enterprise: Enterprise }) {
   const t = useT()
@@ -37,6 +38,7 @@ export function Overview({ enterprise: e }: { enterprise: Enterprise }) {
         <NeedsYou enterprise={e} overview={data} />
         <Costs enterprise={e} overview={data} />
         <Work enterprise={e} overview={data} />
+        <Meetings enterprise={e} />
         {data.objectives.length > 0 && <Objectives e={e} list={data.objectives} />}
         <Digest enterprise={e} overview={data} />
       </SectionStack>

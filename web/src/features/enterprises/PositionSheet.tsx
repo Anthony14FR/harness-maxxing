@@ -2,13 +2,15 @@
 // the Office's panel; "Position" = title, job description, department, lead, occupant, Hire, remove, inbox.
 import * as React from 'react'
 import { Link } from 'react-router'
-import { Maximize2, UserMinus, UserPlus, Trash2, X } from 'lucide-react'
+import { Maximize2, TriangleAlert, UserMinus, UserPlus, Trash2, X } from 'lucide-react'
 import { useLang, useT } from '@/i18n'
 import { errorMessage, isApiError } from '@/lib/api'
 import { agentRoute, useAgents, useDeletePosition, useEnterpriseEscalations, useEnterpriseRequests, usePositionInbox, useTasks } from '@/lib/queries'
 import { fmtRelative } from '@/lib/format'
+import { cn } from '@/lib/utils'
 import type { Agent, Enterprise, Position } from '@/lib/types'
-import { Badge, Button, confirm, toast, FormField, Input, Select, Sensitive, Sheet, SheetContent, SheetTitle, StatusDot, Tabs, TabsContent, TabsList, TabsTrigger, Textarea, Tooltip } from '@/components/ui'
+import { Badge, Button, confirm, toast, FormField, Input, ProgressBar, Select, Sensitive, Sheet, SheetContent, SheetTitle, StatusDot, Switch, Tabs, TabsContent, TabsList, TabsTrigger, Textarea, Tooltip } from '@/components/ui'
+import { SettingRow } from '@/features/common'
 import { AgentChatPanel } from '@/features/agents/AgentPage'
 import { HireDialog, NONE, leadOptions } from './dialogs'
 import { EscalationCard, RequestCard } from './Overview'
@@ -80,15 +82,19 @@ function PositionForm({ enterprise: e, position: p, onClose, onHired }: { enterp
   const below = React.useMemo(() => subtreeIds(e.positions, p.id), [e.positions, p.id])
   const eligible = React.useMemo(() => {
     const seated = new Set(e.positions.filter((x) => x.id !== p.id && x.agent).map((x) => x.agent as string))
-    const list: Agent[] = (agents?.agents || []).filter((a) => inProjects(a.path, e.projects) && !seated.has(a.path))
-    return list
+    // an agent of a project that is not linked is offered too: seating it asks to link the project first
+    const list: Agent[] = (agents?.agents || []).filter((a) => !seated.has(a.path))
+    return list.sort((x, y) => Number(inProjects(y.path, e.projects)) - Number(inProjects(x.path, e.projects)))
   }, [agents, e.positions, e.projects, p.id])
   const occupantOptions = React.useMemo(() => {
-    const o = eligible.map((a) => ({ value: a.path, label: <Sensitive length={14}>{`${a.display_name} · ${a.project} / ${a.topic}`}</Sensitive> }))
+    const o = eligible.map((a) => ({
+      value: a.path,
+      label: <Sensitive length={14}>{`${a.display_name} · ${a.project} / ${a.topic}${inProjects(a.path, e.projects) ? '' : ` (${t('ent.position.notLinked')})`}`}</Sensitive>,
+    }))
     // an agent that is gone (or outside the linked projects) still shows as the current value
     if (p.agent && !o.some((x) => x.value === p.agent)) o.unshift({ value: p.agent, label: <Sensitive length={14}>{p.occupant?.display_name || p.agent.split('/').pop() || p.agent}</Sensitive> })
     return o
-  }, [eligible, p.agent, p.occupant])
+  }, [eligible, p.agent, p.occupant, e.projects, t])
 
   const reports = e.positions.filter((x) => x.reports_to === p.id)
   const lead = p.reports_to || 'owner'
@@ -174,7 +180,10 @@ function PositionForm({ enterprise: e, position: p, onClose, onHired }: { enterp
         {!p.agent && occupantOptions.length === 0 && <p className="text-[13px] text-muted-foreground">{t('ent.position.noAgents')}</p>}
       </div>
 
+      <NoteSize position={p} />
+
       <div className="grid gap-5 border-t pt-4">
+        <UntrustedSwitch enterprise={e} position={p} />
         <DeskSwitch enterprise={e} position={p} />
         <WorkerTemplateEditor enterprise={e} position={p} />
         <PositionWorkers enterprise={e} position={p} />
@@ -186,6 +195,55 @@ function PositionForm({ enterprise: e, position: p, onClose, onHired }: { enterp
         </Button>
       </div>
       <HireDialog enterprise={e} position={p} open={hiring} onOpenChange={setHiring} onHired={onHired} />
+    </div>
+  )
+}
+
+/** How much of the occupant's note (enterprise + department + job description) fits: the server cuts it at its cap. */
+const NOTE_CAP = 3000
+function NoteSize({ position: p }: { position: Position }) {
+  const t = useT()
+  const chars = p.note_chars ?? 0
+  if (!chars) return null
+  const cut = !!p.note_cut || chars > NOTE_CAP
+  return (
+    <section className="grid gap-1.5 border-t pt-4" data-testid="note-size">
+      <div className="flex items-center justify-between gap-2 text-sm font-medium">
+        <h4>{t('ent.note.title')}</h4>
+        <span className={cn('text-xs font-normal tabular-nums', cut ? 'text-warning' : 'text-muted-foreground')}>{t('ent.note.size', { chars, max: NOTE_CAP })}</span>
+      </div>
+      <ProgressBar value={Math.min(chars, NOTE_CAP)} max={NOTE_CAP} tone={cut ? 'warn' : chars > NOTE_CAP * 0.85 ? 'warn' : undefined} label={t('ent.note.title')} />
+      <p className={cn('text-[13px]', cut ? 'text-warning' : 'text-muted-foreground')}>{cut ? t('ent.note.cut', { max: NOTE_CAP }) : t('ent.note.hint')}</p>
+    </section>
+  )
+}
+
+/** "Runs code from outside": the occupant must be protected and hold no key; saved at once, the server says what does not fit. */
+function UntrustedSwitch({ enterprise: e, position: p }: { enterprise: Enterprise; position: Position }) {
+  const t = useT()
+  const { save, pending } = useSavePosition(e)
+  const o = p.occupant
+  const reasons: string[] = []
+  if (p.untrusted_code && o && !o.sandbox) reasons.push(t('ent.untrusted.reason.sandbox'))
+  return (
+    <div className="grid gap-2" data-testid="untrusted-code">
+      <SettingRow label={t('ent.untrusted.label')} description={t('ent.untrusted.desc')} htmlFor="ent-position-untrusted">
+        <Switch id="ent-position-untrusted" checked={!!p.untrusted_code} disabled={pending} onCheckedChange={(v) => save(p.id, { untrusted_code: v })} data-testid="position-untrusted" />
+      </SettingRow>
+      {p.untrusted_code && e.sandbox_available === false && (
+        <p role="alert" className="flex items-start gap-2 rounded-lg border border-warning/40 bg-warning/10 p-3 text-[13px]" data-testid="sandbox-missing">
+          <TriangleAlert className="mt-0.5 size-4 shrink-0 text-warning" />
+          {t('ent.untrusted.noSandbox')}
+        </p>
+      )}
+      {reasons.length > 0 && (
+        <p role="alert" className="flex items-start gap-2 rounded-lg border border-warning/40 bg-warning/10 p-3 text-[13px]" data-testid="untrusted-unfit">
+          <TriangleAlert className="mt-0.5 size-4 shrink-0 text-warning" />
+          <span>
+            {t('ent.untrusted.unfit')} {reasons.join(' ')}
+          </span>
+        </p>
+      )}
     </div>
   )
 }
@@ -250,6 +308,9 @@ function PositionWork({ enterprise: e, position: p }: { enterprise: Enterprise; 
                   {x.due && <span>{t('ent.position.taskDue', { date: x.due })}</span>}
                   {x.enterprise?.stage === 'blocked' && <Badge variant="warning">{t('ent.state.blocked')}</Badge>}
                   {x.enterprise?.stage === 'review' && <Badge variant="muted">{t('ent.position.taskReview')}</Badge>}
+                  {x.enterprise?.stage === 'review_pending' && <Badge variant="warning">{t('ent.stage.review_pending')}</Badge>}
+                  {x.enterprise?.stage === 'changes' && <Badge variant="warning">{t('ent.stage.changes')}</Badge>}
+                  {x.enterprise?.stage === 'reviewed' && <Badge variant="success">{t('ent.stage.reviewed')}</Badge>}
                   {x.enterprise?.requester && x.enterprise.requester !== 'owner' && (
                     <span>
                       {t('ent.position.taskFrom')} <Sensitive length={8}>{e.positions.find((q) => q.id === x.enterprise?.requester)?.title || x.enterprise.requester}</Sensitive>
