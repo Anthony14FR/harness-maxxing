@@ -151,3 +151,12 @@ def test_the_hire_card_settings_warning_and_unfit_reasons_are_wired():
     assert "settings_warnings" in (ent / "EnterpriseSettings.tsx").read_text(encoding="utf-8")
     assert "untrusted_unfit" in (ent / "parts.tsx").read_text(encoding="utf-8")
     assert "holds_keys" in (ent / "PositionSheet.tsx").read_text(encoding="utf-8")
+
+
+def test_the_zero_switch_can_always_be_turned_off_and_last_move_is_a_time():
+    root = WEB.parent
+    settings = (root / "src/features/enterprises/EnterpriseSettings.tsx").read_text(encoding="utf-8")
+    assert "checked={d.zero}" in settings and "disabled={d.top === OWNER && !d.zero}" in settings
+    assert "zero_intervention: d.top === OWNER ? false : d.zero" in settings
+    tasks = (root / "src/features/enterprises/Tasks.tsx").read_text(encoding="utf-8")
+    assert "fmtRelative(x.last_move, lang)" in tasks
