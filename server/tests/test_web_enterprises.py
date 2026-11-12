@@ -142,3 +142,12 @@ def test_the_envelope_skip_reason_has_its_web_text_and_the_mock_has_the_new_rout
                   "/api/enterprises/:e/profile/suggestions'", "/api/enterprises/:e/profile/suggestions/:sid'", "/api/enterprises/:e/workers'",
                   "/api/enterprises/:e/workers/:wid'"):
         assert route in mock, route
+
+
+def test_the_hire_card_settings_warning_and_unfit_reasons_are_wired():
+    ent = WEB / "features" / "enterprises"
+    overview = (ent / "Overview.tsx").read_text(encoding="utf-8")
+    assert "HireDetails" in overview and "hire-role" in overview and "r.outside" in overview
+    assert "settings_warnings" in (ent / "EnterpriseSettings.tsx").read_text(encoding="utf-8")
+    assert "untrusted_unfit" in (ent / "parts.tsx").read_text(encoding="utf-8")
+    assert "holds_keys" in (ent / "PositionSheet.tsx").read_text(encoding="utf-8")

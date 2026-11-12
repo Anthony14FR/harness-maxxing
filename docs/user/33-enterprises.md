@@ -122,12 +122,16 @@ review) or `maxxing enterprise review TASK changes "notes"` (stage **Changes ask
 owner, who goes on working). Only the reviewer can use the command, and a task owned by the reviewer itself is not
 reviewed. Leave the setting empty for no review step.
 
+While a task waits for review (**Waiting for review** or **Changes asked**), the requester cannot accept it: only the
+reviewer's verdict moves it on. If the reviewer position is removed or the setting is cleared, the tasks waiting for
+review go back to the requester to accept.
+
 ## Meetings
 
 A **lead** (or you) can call an **enterprise meeting** to get several positions' views at once, across projects:
 `maxxing enterprise meeting start "topic" --with writer,social [--hours 6]`. A lead invites positions **in its own
 branch** of the chart; the top position may invite any position; nobody invites itself. Each invited position receives
-the topic and answers once with `maxxing enterprise meeting reply ID "text"` (it sees the replies so far). The meeting
+the topic and answers once with `maxxing enterprise meeting reply ID "text"` (each invited position answers on its own). The meeting
 closes when everyone has answered or at the **deadline** (4 hours by default, up to 168), and the organizer receives
 the **minutes**: all the replies. The meetings are listed with their replies and minutes, read-only in the app.
 
@@ -141,7 +145,7 @@ names its target (`--position`, with `--job` or `--agent`), which must be in the
 | Request | Careful | Balanced | Autonomous |
 |---|---|---|---|
 | Assign to a direct report, read the profile, write in one's own department | free | free | free |
-| Deliver into another department's folder, ask for work from another department | you | lead | lead |
+| Deliver into another department's folder | you | lead | lead |
 | Edit a report's job description | you | lead | lead |
 | Create a worker from an approved template | you | lead | lead |
 | Edit the company profile (not prices or terms) | you | lead | lead |
@@ -157,10 +161,15 @@ Some rows are enforced by the server; the spending rows are **declared** by the 
 agent's role and its usual approvals.
 
 **Hire requests**: a position can ask for a **new position and its agent** with
-`maxxing enterprise request hire "why" --title T --department D --reports-to P --job TEXT --topic projects/<p>/topics/<t>
---name N --role TEXT [--model M] [--effort E]` (`--title` and `--topic` are required). It is always yours to decide: **on
-your Accept**, the position is created under the chosen lead, the agent is created in that topic and seated, and the
-requester is told the outcome (or why it failed).
+`maxxing enterprise request hire "why" --title T --topic projects/<p>/topics/<t> [--department D] [--reports-to P]
+[--job TEXT] [--name N] [--role TEXT] [--model M] [--effort E]` (only `--title` and `--topic` are required). It is always
+yours to decide: **on your Accept**, the position is created under the chosen lead, the agent is created in that topic
+and seated, and the requester is told the outcome (or why it failed).
+
+The **hire card** shows everything you accept: title, department, lead, topic, name, model, effort, the job description
+and the **role** (the first 600 characters, in a collapsible block), and a **From outside** marker when the request
+was made after text from outside. Read the role before you accept. The new agent is **protected (sandboxed)** when its
+requester is, or when the position it takes is marked as running outside code.
 
 A request that reaches you is an **Allow / Deny** card in the **Overview** ("Waiting for you"), in the notifications
 and on Telegram. A lead decides in its next run. If nobody answers in time, the request climbs one level, like an
@@ -181,6 +190,13 @@ otherwise reach you, including its own requests (the log says so), so you can **
 the CEO**. Grants are not needed in that mode. Always staying yours: requests born from **outside content**, **hires
 and removals** (`hire`, `hire_remove`), changes of **keys, domains, sandbox and folders**, **prices and terms**, and
 **putting the front desk live**. When the top is vacant or off, the request goes to you as usual.
+
+- It only fully works with **Trust along the chain** on. With it off, a message from another agent counts as outside
+  text, so the requests made while handling a delivery are marked outside and reach you, not the top. The settings
+  warn about it and offer to turn trust on.
+- A **batch that started from outside** (a stranger's message among the deliveries of a run) never lets the top
+  decide: what is requested in it climbs to you.
+- Switching it **off** hands the requests still waiting at the top back to you, with their cards.
 
 **Delegated approval**: you can let a lead decide a category up to a ceiling until a date ("until Friday, the head of
 marketing decides spending up to 50 USD"), 30 days at most, revocable. It never covers the rows where you always
@@ -212,12 +228,15 @@ department an equal share (rounded down to 0.05 USD a day). **With a Claude subs
 
 **Shared keys** (settings): vault keys given to **every occupant** of the enterprise on top of its own. They are still
 filtered by the department and enterprise key envelopes (they never widen one), and never reach a position that runs
-outside code, nor a front desk turn.
+outside code, nor a front desk turn. An **import resets** them to none.
 
 **Positions that run outside code**: switch **Runs code from outside** on a position (for instance one that builds
 the pull requests of strangers). Its agent must be **protected (sandboxed) and hold no key**: seating an unfit agent is
-refused with the reasons, and deliveries to an occupant that became unfit **wait**. Hire creates a protected agent
-without key for such a position. The settings warn when this server cannot run protected agents (sandbox not
+refused with the reasons (*it is not protected*, *it holds keys*), and deliveries to an occupant that became unfit
+**wait**: the position shows *Blocked* with the reason. On such a position **every run** (its triggers, its schedules,
+your chat with it, not only the deliveries) is forced to **sandbox with no key**, and the agent's keys and sandbox
+cannot be changed while it holds the seat (the change is refused). An agent hired from a protected requester or for
+such a position is protected. The position panel warns when this server cannot run protected agents (sandbox not
 available).
 
 **Departments** (settings): a branch of the chart with its own envelope and notes, and overrides of some settings
@@ -263,7 +282,7 @@ digest, the cards that need you, and the answers you give there. Without topics,
 enterprise's emoji in front. The **Notifications** settings apply: set the source *Enterprises* to off or silent and the
 digests and notes stay in the app (or arrive silently); a card that waits for your answer stays loud, like an approval.
 
-Notifications, Telegram cards and the texts of decisions follow the **language of the server** (English or French).
+The titles of notifications, Telegram cards and decision texts follow the **language of the server** (English or French); some message bodies and button labels stay in English.
 
 ## Workers
 
@@ -321,7 +340,7 @@ In the enterprise's **Settings** tab (**Export and import**), **Download** expor
 descriptions, departments, settings, mission, profile and shared files. It holds **no** grant, **no** agent path, **no**
 key or domain list, no front desk conversation and no live public link: the desk comes back **off** with no link,
 **trust along the chain** comes back off and approved worker templates are left out (listed as skipped). An import also
-resets the autonomy, workers, communication (and who may write to whom) and digest / weekly / monthly switches, department overrides included, to their defaults (listed as skipped
+resets the shared keys, the top-decides switch, the autonomy, workers, communication (and who may write to whom) and digest / weekly / monthly switches, department overrides included, to their defaults (listed as skipped
 when they were not): set them again if you want them.
 **Import** (the same tab, or the **Enterprises** page) creates a **new** enterprise from a zip (a free name is chosen if
 needed), with **vacant** positions and no linked project: link your projects, then hire or seat the agents. Files
