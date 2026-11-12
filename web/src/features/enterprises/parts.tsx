@@ -5,7 +5,7 @@ import { useQueryClient } from '@tanstack/react-query'
 import { Building2, Settings2 } from 'lucide-react'
 import { useT, type TKey } from '@/i18n'
 import { errorMessage, isApiError } from '@/lib/api'
-import { entKeys, usePatchPosition, useSettings, useWorkspace } from '@/lib/queries'
+import { entKeys, useResumePosition, usePatchPosition, useSettings, useWorkspace } from '@/lib/queries'
 import type { Enterprise, Position, PositionPatch, PositionState } from '@/lib/types'
 import { Button, EmptyState, confirm, toast, type DotTone } from '@/components/ui'
 import { Page } from '@/components/shell/Page'
@@ -184,4 +184,23 @@ export function chartOrder(e: Pick<Enterprise, 'positions' | 'top'>): { p: Posit
   for (const r of roots) walk(r, 0)
   for (const p of e.positions) walk(p, 0)
   return out
+}
+
+/** "Resume" for a position whose last run failed or that is blocked (nothing for the others). */
+export function ResumeButton({ enterprise, position: p, className }: { enterprise: string; position: Position; className?: string }) {
+  const t = useT()
+  const resume = useResumePosition()
+  if (p.state !== 'failed' && p.state !== 'blocked') return null
+  return (
+    <Button
+      size="sm"
+      variant="outline"
+      className={className}
+      loading={resume.isPending}
+      onClick={() => resume.mutate({ id: enterprise, pos: p.id }, { onSuccess: () => toast.success(t('ent.resume.done')) })}
+      data-testid="position-resume"
+    >
+      {t('ent.resume')}
+    </Button>
+  )
 }

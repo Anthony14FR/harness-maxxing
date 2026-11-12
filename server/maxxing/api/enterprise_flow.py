@@ -67,6 +67,16 @@ def answer_escalation(e: str, esc_id: str, body: AnswerIn):
         raise _bad(x) from None
 
 
+@router.post("/{e}/positions/{pos}/resume")
+def resume_position(e: str, pos: str):
+    _on()
+    try:
+        item = enterprise_flow.resume_position(e, pos)
+        return {"ok": True, "item": item["id"]}
+    except enterprises.EnterpriseError as x:
+        raise _bad(x) from None
+
+
 @router.get("/{e}/tasks")
 def list_tasks(e: str):
     _on()

@@ -116,6 +116,10 @@ export function useHirePosition() {
     errorToast: false,
   })
 }
+/** Tells a position to go through its open tasks (a trusted owner item in its inbox). */
+export function useResumePosition() {
+  return useMut(({ id, pos }: { id: string; pos: string }) => api.post<{ ok: boolean }>(posUrl(id, pos, '/resume')), { invalidate: [entKeys.all] })
+}
 /** Sets each member's daily budget of a department to its share of the ceiling. */
 export function useSplitBudget() {
   return useMut(({ id, department }: { id: string; department: string }) => api.post<{ agents: { path: string; usd_per_day: number }[]; enterprise: Enterprise }>(base(id, `/departments/${seg(department)}/split-budget`)), {
