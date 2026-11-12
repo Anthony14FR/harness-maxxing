@@ -58,6 +58,8 @@ CLI_ALLOWED = {                        # show/list/feed list are narrowed furthe
     # filtered by the agent's `mail` (cmd_mail.Guard): its mailboxes, rights and senders
     "mail": {"accounts", "folders", "list", "read", "attachment", "write", "move", "mkdir", "refresh", "outbox",
              "archive", "trash", "junk", "inbox", "seen", "unseen", "flag", "unflag"},
+    "enterprise": {"assign", "done", "block", "escalate", "answer", "decide", "request", "objective", "show",
+                   "profile"},        # as the caller's own position (cmd_enterprise); `show` narrowed there
     "status": None,                   # None = any
 }
 
@@ -709,6 +711,7 @@ def agent_turn() -> dict:
         (os.environ.get("MAXXING_AGENT") or "").strip() != path
         or (os.environ.get("MAXXING_AGENT_DEPTH") or "0").strip() != str(env.get("MAXXING_AGENT_DEPTH") or "0")))
     return {"path": path, "depth": depth, "tampered": tampered, "manager": manager,
+            "outside": str(env.get("MAXXING_AGENT_OUTSIDE") or "").strip() == "1",
             "session": str((meta or {}).get("id") or (os.environ.get("MAXXING_SESSION") if meta is None else "") or "")}
 
 
@@ -748,6 +751,9 @@ AGENT_MANAGER = {"cron", "webhook", "watch", "on", "off", "silent", "loud", "set
 # ...and so is what starts something with the owner's rights outside the agent's guards (a session of any topic,
 # a scheduled job now): an agent hands work to another agent (`maxxing agents send`), which keeps its own
 OWNER_ONLY = {"sessions": {"new", "send"}, "cron": {"run", "restore"}}
+# the structure of an enterprise is the owner's: refused in every agent turn (the owner's conversation included)
+ENTERPRISE_OWNER_ONLY = {"create", "link", "unlink", "position", "settings", "grant", "report", "decisions", "export",
+                         "import", "list"}
 
 
 def _manages(turn: dict, words: list[str], argv: list[str]) -> bool:
@@ -813,6 +819,10 @@ def check_cli(argv: list[str]) -> str | None:
         return (f"`maxxing {cmd} {sub}` is not allowed in an agent run: it would start work with the owner's rights, "
                 "outside this agent's budget and guards. Hand it to another agent (`maxxing agents send`) or say "
                 "what should be done in your answer.")
+    if turn["path"] and words[0] == "enterprise" and len(words) > 1 and words[1] in ENTERPRISE_OWNER_ONLY:
+        return (f"`maxxing enterprise {words[1]}` is not allowed in an agent turn: an agent never changes the chart, "
+                "its settings or its grants. Say what should change in your answer (or `maxxing enterprise escalate` / "
+                "`request`); the owner applies it from the Enterprises page or a session.")
     path = sandboxed_turn()
     if not path:
         return None
