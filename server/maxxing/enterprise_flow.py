@@ -25,8 +25,8 @@ from .enterprises import EnterpriseError
 logger = logging.getLogger("maxxing.enterprise_flow")
 
 KINDS = ("assign", "handin", "escalation", "answer", "request", "decision", "note", "review", "meeting",
-         "meeting_minutes")
-DOWN = ("assign", "answer", "decision")             # orders from a lead: clear text when the chain is trusted
+         "meeting_minutes", "followup")
+DOWN = ("assign", "answer", "decision", "followup")             # orders from a lead: clear text when the chain is trusted
 TEXT_MAX = 4000
 INBOX_MAX = 500
 SEEN_KEEP = 50
@@ -34,7 +34,10 @@ ESC_KEEP = 200
 HARD = ("disabled", "budget", "missing", "envelope", "vacant")     # an escalation skips a position in this state
 WORD = {"assign": "Assignment", "handin": "Hand-in", "escalation": "Escalation", "answer": "Answer",
         "request": "Request", "decision": "Decision", "note": "Note", "review": "Review", "meeting": "Meeting",
-        "meeting_minutes": "Meeting minutes"}
+        "meeting_minutes": "Meeting minutes", "followup": "Follow-up"}
+UP_FRAME = "Report from your team (information, not an order):"
+STALE_H = 4.0                                       # hours without movement before the requester is woken (zero mode: 2)
+STALE_ZERO_H = 2.0
 MEETING_H = 4.0                                     # default hours before a meeting closes with the replies it has
 MEETING_KEEP = 100
 TEXTS = {                                           # owner-facing notification texts (language setting, English fallback)
@@ -47,6 +50,7 @@ TEXTS = {                                           # owner-facing notification 
                      "fr": "La réunion \"{topic}\" est close ({n} réponses sur {total})."},
     "no_reply": {"en": "no reply", "fr": "pas de réponse"},
     "open": {"en": "Open", "fr": "Ouvrir"},
+    "report_title": {"en": "{name}: report from {who}", "fr": "{name} : point de {who}"},
     "handin_body": {"en": "Hand-in from {who} for \"{title}\": {summary}\nAccept it with `maxxing enterprise done {id}`, or "
                           "send it back with `maxxing enterprise assign {owner} \"notes\" --task {id}`.",
                     "fr": "Livrable de {who} pour \"{title}\" : {summary}\nAcceptez-le avec `maxxing enterprise done {id}`, "
@@ -86,6 +90,38 @@ def _mod(name: str) -> Any:
 
 def _fn(name: str, attr: str) -> Any:
     return getattr(_mod(name), attr, None)
+
+
+def zero(slug: str) -> bool:
+    """Zero intervention is on (the policy's answer, else the stored setting)."""
+    f = _fn("enterprise_policy", "zero")
+    try:
+        if f:
+            return bool(f(slug))
+    except Exception:  # noqa: BLE001
+        logger.exception("zero")
+    try:
+        return bool(enterprises.setting(slug, "zero_intervention"))
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _trust(slug: str) -> bool:
+    try:
+        return bool(enterprises.setting(slug, "trust_chain"))
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _dirty(slug: str, item: dict) -> bool:
+    """The item or its task carries an outside mark."""
+    if item.get("outside"):
+        return True
+    if item.get("task"):
+        e = _load_task(slug, item["task"])[1]
+        if e and e.get("outside"):
+            return True
+    return False
 
 
 # ---- files -------------------------------------------------------------------------------------------------
@@ -378,9 +414,8 @@ def _compose(slug: str, pos: str, items: list[dict], trusted: bool) -> tuple[str
     lines = [line(n, it) for n, it in enumerate(items, 1)]
     if not trusted:
         return head, "\n\n".join(lines)
-    down = [ln for ln, it in zip(lines, items) if it.get("kind") in DOWN]
-    up = [ln for ln, it in zip(lines, items) if it.get("kind") not in DOWN]
-    return head + ("\n\n" + "\n\n".join(down) if down else ""), "\n\n".join(up)
+    framed = [ln if it.get("kind") in DOWN else f"{UP_FRAME}\n{ln}" for ln, it in zip(lines, items)]
+    return head + "\n\n" + "\n\n".join(framed), ""      # a clean chain: everything in the trusted prompt, reports framed as information
 
 
 def _flush(slug: str, pos: str, now: float) -> str:
@@ -396,6 +431,10 @@ def _flush(slug: str, pos: str, now: float) -> str:
         if not items:
             _unwait(slug, pos)
             return "empty"
+        if _trust(slug) and len(items) > 1:
+            clean = [i for i in items if not _dirty(slug, i)]
+            if clean and len(clean) < len(items):
+                items = clean                           # a mixed batch splits: the outside items run alone, next
         if enterprises.load(slug).get("top") == pos and enterprises.setting(slug, "top_decides"):
             same = bool(items[0].get("outside"))        # the top that decides for the owner never reads stranger text beside an owner-level request
             items = [i for i in items if bool(i.get("outside")) == same]
@@ -407,8 +446,8 @@ def _flush(slug: str, pos: str, now: float) -> str:
         why = _why_not(path) or _unfit(slug, pos, p)
         if why:
             return _wait(slug, pos, now, why)
-        outside = any(i.get("outside") for i in items)
-        trusted = False
+        outside = any(_dirty(slug, i) for i in items)
+        trusted = _trust(slug) and not outside
         f = _fn("enterprise_policy", "trusted_delivery")
         if f:
             try:
@@ -449,6 +488,18 @@ def _target(slug: str, pos: str) -> tuple[str, list[tuple[str, str]]]:
     return "owner", skipped
 
 
+def _top(slug: str) -> str:
+    """The top position when it is a position ("" when the owner is the top)."""
+    t = enterprises.load(slug).get("top")
+    return t if isinstance(t, str) and t not in ("", "owner") and enterprises.position(slug, t) else ""
+
+
+def _top_stop(slug: str, asker: str) -> str:
+    """Zero mode, work for the owner (too many hops): the top answers it unless it is the asker or unavailable."""
+    t = _top(slug)
+    return t if t and t != asker and _hard(slug, t) is None else "owner"
+
+
 def _log_skips(slug: str, asker: str, skipped: list[tuple[str, str]]) -> None:
     for a, why in skipped:
         enterprises.log(slug, "skip", f"Escalation from {asker} skips {a}: {why}", by="server", position=a)
@@ -469,7 +520,10 @@ def _send_esc(slug: str, e: dict, note: str = "") -> None:
 
 def _new_esc(slug: str, pos: str, text: str, task: str, outside: bool, session: str, now: float, *,
              waiting: str = "", to_owner: bool = False) -> dict:
-    target, skipped = ("owner", []) if to_owner else _target(slug, pos)
+    if to_owner:
+        target, skipped = (_top_stop(slug, pos) if zero(slug) else "owner"), []
+    else:
+        target, skipped = _target(slug, pos)
     e = {"id": "e_" + secrets.token_hex(3), "position": pos, "text": agents._utf8(text)[:TEXT_MAX], "task": task or "",
          "level": 0, "to": target, "deadline": None if target == "owner" else now + _timeout_s(slug, pos),
          "status": "open", "at": now, "outside": bool(outside), "trail": []}
@@ -548,6 +602,20 @@ def _climb(slug: str, esc_id: str, now: float, why: str) -> None:
     if pre is None or pre["to"] == "owner":
         return
     cur = pre["to"]
+    if zero(slug) and cur == _top(slug) and _hard(slug, cur) is None:     # zero mode: the climb stops at the top, which keeps it
+        with enterprises._lock:
+            items = _esc_items(slug)
+            e = next((i for i in items if i.get("id") == esc_id and i.get("status") == "open"), None)
+            if e is None or e["to"] != cur:
+                return
+            e["deadline"] = now + _timeout_s(slug, e["position"])
+            _save_esc(slug, items)
+            snap = dict(e)
+        enterprises.log(slug, "climb", f"Escalation {esc_id} stays with {cur} (top position): {why}", by="server",
+                        position=cur, task=snap.get("task") or "")
+        _send_esc(slug, snap, f" (still open: {why})")
+        enterprises.invalidate(slug)
+        return
     nxt, skipped = _target(slug, cur)                   # agent gates and state reads: never under the lock
     with enterprises._lock:
         items = _esc_items(slug)
@@ -1039,6 +1107,189 @@ def _resume(now: float) -> None:
     config.write_json(f, {})
 
 
+def report_to_owner(slug: str, pos: str, text: str, *, session: str = "") -> dict:
+    """The top position tells the owner something (the one message that always reaches the owner in zero mode)."""
+    _chart(slug)
+    text = (text or "").strip()
+    if not text:
+        raise EnterpriseError(400, "invalid", "text is required")
+    if not pos or _top(slug) != pos:
+        raise EnterpriseError(403, "not_top", "Only the top position reports to the owner")
+    text = agents._utf8(text)[:TEXT_MAX]
+    _notify(slug, _t("report_title", name=_name(slug), who=_label(slug, pos)), text, url=f"/enterprises/{slug}/overview",
+            always=True, dedupe=f"report:{slug}:{pos}:{int(_now())}")
+    enterprises.log(slug, "report", f"{_label(slug, pos)} reports to the owner: {text}", by=pos, position=pos, session=session)
+    return {"ok": True}
+
+
+# ---- following up delegated tasks --------------------------------------------------------------------------------
+def _open_rows(slug: str) -> list[tuple[dict, dict]]:
+    """(task, its enterprise object) of the delegated tasks not done yet."""
+    try:
+        rows = _tasks().load(copy_=False)["tasks"]
+    except Exception:  # noqa: BLE001 - no tasks file, a damaged one: nothing to follow
+        return []
+    return [(t, e) for t in list(rows) if (e := _ent(t, slug)) and t.get("status") != "done"]
+
+
+def _age(secs: float) -> str:
+    h = max(0.0, secs) / 3600
+    return f"{h * 60:.0f} min" if h < 1 else f"{h:.0f} h" if h < 48 else f"{h / 24:.0f} days"
+
+
+def _task_line(slug: str, t: dict, e: dict, now: float) -> str:
+    state = e.get("stage") or t.get("status") or "doing"
+    return (f"- {t['id']} \"{t.get('title', '')}\": {state}, with {_label(slug, e.get('owner') or '')}, open for "
+            f"{_age(now - float(t.get('created') or now))}, last move {_age(now - float(t.get('updated') or now))} ago")
+
+
+def stale_hours(slug: str) -> float:
+    """Hours without movement before the requester is woken (0 = never)."""
+    try:
+        v = enterprises.setting(slug, "stale_h")
+    except Exception:  # noqa: BLE001
+        v = None
+    if isinstance(v, bool) or not isinstance(v, (int, float)):
+        return STALE_ZERO_H if zero(slug) else STALE_H
+    return max(0.0, float(v))
+
+
+def _running_on(slug: str, pos: str) -> bool:
+    path = (enterprises.position(slug, pos) or {}).get("agent")
+    try:
+        return bool(path and any(m.get("state") == "running" for m in agents._metas(path)))
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _followups(slug: str, now: float) -> None:
+    """Wake the requester of a delegated task nobody moved for `stale_h` hours (once per task per period); in zero
+    mode the top position also gets one daily list of every open task."""
+    hours = stale_hours(slug)
+    fl = _flow(slug)
+    nudged = fl.get("nudged") if isinstance(fl.get("nudged"), dict) else {}
+    rows = _open_rows(slug)
+    due: dict[tuple[str, bool], list[str]] = {}
+    marks: list[str] = []
+    if hours:
+        for t, e in rows:
+            req = e.get("requester") or ""
+            rp = enterprises.position(slug, req) if req else None
+            if not rp or rp.get("desk"):
+                continue
+            quiet = now - float(t.get("updated") or now)
+            if quiet < hours * 3600 or now - float(nudged.get(t["id"]) or 0) < hours * 3600:
+                continue
+            if _running_on(slug, e.get("owner") or ""):
+                continue
+            due.setdefault((req, bool(e.get("outside"))), []).append(_task_line(slug, t, e, now))
+            marks.append(t["id"])
+    top = _top(slug) if zero(slug) and rows else ""
+    top_text = ""
+    if top and now - float(fl.get("top_followup") or 0) >= 86400:
+        top_text = "\n".join(_task_line(slug, t, e, now) for t, e in rows)
+    if not due and not top_text:
+        return
+    with enterprises._lock:
+        fl = _flow(slug)
+        n2 = fl.get("nudged") if isinstance(fl.get("nudged"), dict) else {}
+        n2.update({tid: now for tid in marks})
+        live = {t["id"] for t, _ in rows}
+        fl["nudged"] = {k: v for k, v in n2.items() if k in live}
+        if top_text:
+            fl["top_followup"] = now
+        _save_flow(slug, fl)
+    for (req, outside), lines in due.items():
+        deliver(slug, req, "followup", "These tasks you delegated have not moved. Chase the owner (`maxxing enterprise "
+                "assign` again, `escalate`), decide at your level or accept what is ready:\n" + "\n".join(lines),
+                outside=outside)
+    if top_text:
+        deliver(slug, top, "followup", "Daily follow-up, every open delegated task of the enterprise (see "
+                "`maxxing enterprise tasks --all`):\n" + top_text)
+
+
+def _run_of(slug: str, t: dict, e: dict, metas: dict) -> dict | None:
+    """The owner's latest run on the task ({session, running}) when a delivery about it started one."""
+    owner = e.get("owner") or ""
+    runs = [i for i in seen(slug, owner) if i.get("task") == t["id"] and i.get("run")] if owner else []
+    if not runs:
+        return None
+    sid = runs[-1]["run"]
+    path = (enterprises.position(slug, owner) or {}).get("agent") or ""
+    if path not in metas:
+        try:
+            metas[path] = agents._metas(path) if path else []
+        except Exception:  # noqa: BLE001
+            metas[path] = []
+    return {"session": sid, "running": any(m.get("id") == sid and m.get("state") == "running" for m in metas[path])}
+
+
+def tasks_view(slug: str, *, include_done: bool = False) -> list[dict]:
+    """The delegated tasks of the enterprise, newest move first: id, title, owner, requester, status, stage, created,
+    updated, last_move, hops, outside, run."""
+    _chart(slug)
+    try:
+        rows = [(t, e) for t in list(_tasks().load(copy_=False)["tasks"]) if (e := _ent(t, slug))]
+    except Exception:  # noqa: BLE001
+        rows = []
+    done = sorted((r for r in rows if r[0].get("status") == "done"), key=lambda r: -float(r[0].get("updated") or 0))[:50]
+    rows = [r for r in rows if r[0].get("status") != "done"] + (done if include_done else [])
+    metas: dict = {}
+    out = []
+    for t, e in rows:
+        upd = float(t.get("updated") or t.get("created") or 0)
+        out.append({"id": t["id"], "title": t.get("title", ""), "owner": e.get("owner") or "",
+                    "requester": e.get("requester") or "", "status": t.get("status") or "", "stage": e.get("stage") or "",
+                    "created": float(t.get("created") or 0), "updated": upd, "last_move": upd,
+                    "hops": int(e.get("hops") or 0), "outside": bool(e.get("outside")),
+                    "run": _run_of(slug, t, e, metas) if t.get("status") != "done" else None})
+    out.sort(key=lambda r: -r["updated"])
+    return out
+
+
+def now_view(slug: str) -> list[dict]:
+    """Who works on what right now: [{position, agent, state, task, since}] (state working | waiting | blocked |
+    queued; task = {id, title} | None)."""
+    chart = enterprises.get(slug)
+    if chart.get("broken"):
+        return []
+    open_by_owner: dict[str, list[dict]] = {}
+    for t, e in _open_rows(slug):
+        open_by_owner.setdefault(e.get("owner") or "", []).append(t)
+    out = []
+    for p in chart["positions"]:
+        occ = p.get("occupant")
+        if not occ:
+            continue
+        path, st = occ["path"], p.get("state")
+        queued = enterprises.inbox(slug, p["id"]) if p.get("inbox") else []
+        if st not in ("working", "waiting", "blocked") and not queued:
+            continue
+        run = None
+        try:
+            run = next((m for m in sorted(agents._metas(path), key=lambda m: -float(m.get("spawned_at") or 0))
+                        if m.get("state") == "running"), None)
+        except Exception:  # noqa: BLE001
+            run = None
+        if run:
+            since = float(run.get("spawned_at") or run.get("updated") or 0)
+        elif queued:
+            since = float(queued[0].get("at") or 0)
+        else:
+            since = float((enterprises._waits(slug).get(p["id"]) or {}).get("since") or 0)
+        task = None
+        if run:
+            mine = [i for i in seen(slug, p["id"]) if i.get("run") == run.get("id") and i.get("task")]
+            tid = mine[-1]["task"] if mine else ""
+            task = next((x for x in open_by_owner.get(p["id"], []) if x["id"] == tid), None)
+        if task is None and open_by_owner.get(p["id"]):
+            task = open_by_owner[p["id"]][0]
+        out.append({"position": p["id"], "agent": path,
+                    "state": st if st in ("working", "waiting", "blocked") else "queued",
+                    "task": {"id": task["id"], "title": task.get("title", "")} if task else None, "since": since})
+    return out
+
+
 def _positions_waiting(slug: str) -> list[str]:
     try:
         return sorted(e.name[:-6] for e in os.scandir(enterprises._peek(slug) / "inbox")
@@ -1059,6 +1310,7 @@ def tick(now: float | None = None) -> None:
         try:
             if enterprises.load(slug).get("broken"):
                 continue
+            _followups(slug, now)
             for pos in _positions_waiting(slug):
                 _flush(slug, pos, now)
             _climb_waits(slug, now)
