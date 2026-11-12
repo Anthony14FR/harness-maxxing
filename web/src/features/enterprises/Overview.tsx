@@ -90,8 +90,9 @@ function positionTitle(e: Enterprise, id: string) {
 }
 
 /** What a hire request creates: every field the owner accepts, the role in a collapsible block. */
-function HireDetails({ request: r }: { request: EnterpriseRequest }) {
+function HireDetails({ request }: { request: EnterpriseRequest }) {
   const t = useT()
+  const r = { ...request, ...(request.hire ?? {}) }
   const rows: [string, string | undefined][] = [
     [t('ent.hireCard.title'), r.title],
     [t('ent.hireCard.department'), r.department],
