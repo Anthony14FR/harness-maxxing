@@ -8,6 +8,7 @@ files' stats and never raise; they do not look at the feature switches (the hook
 while the feature is off): callers gate with `feature_on()`."""
 from __future__ import annotations
 
+import contextlib
 import copy
 import json
 import logging
@@ -633,6 +634,15 @@ def untrusted_unfit(slug: str, pos: str) -> list[str]:
         return []
 
 
+def untrusted_seat(path: str) -> bool:
+    """The agent holds a position flagged `untrusted_code` (its runs are always sandboxed and keyless). Never raises."""
+    try:
+        seat = seat_of(path) if feature_on() else None
+        return bool(seat and (position(*seat) or {}).get("untrusted_code"))
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def _check_agent(d: dict, slug: str, path: Any, pos: str, link: bool = False) -> str:
     ap = agents.parse(path) if isinstance(path, str) else None
     if not ap or not agents.exists(path):
@@ -773,9 +783,14 @@ def update(slug: str, fields: dict) -> dict:
             if f["top"] != "owner" and f["top"] not in roots:
                 raise EnterpriseError(400, "bad_position", "top: \"owner\" or a position that reports to nobody")
             d["top"] = f["top"]
+            if f["top"] == "owner":
+                d["settings"]["top_decides"] = False     # a setting about the top never lands on the next one
         return sorted(f)
 
     _apply(slug, edit, lambda d, keys: "Updated " + ", ".join(keys))
+    if "settings" in f or "top" in f:
+        _release_top(slug)
+        _release_reviews(slug)
     for line in grants_log:
         log(slug, "grant", line)
     return get(slug)
@@ -910,6 +925,8 @@ def get(slug: str, with_state: bool = True) -> dict:
     out = {**d, "id": slug, "name": d["name"] or slug, "broken": bool(d.get("broken"))}
     out["cost_today"], out["ceiling_hit"] = 0.0, False
     out["sandbox_available"], out["budget_warnings"] = _sandbox_available(), []
+    st = d.get("settings") or {}
+    out["settings_warnings"] = ["top_decides_needs_trust_chain"] if st.get("top_decides") and not st.get("trust_chain") else []
     if d.get("broken"):
         return out
     positions = [dict(p) for p in d["positions"]]
@@ -1153,6 +1170,7 @@ def update_position(slug: str, pos: str, fields: dict, rev: int | None = None) -
                 raise EnterpriseError(400, "cycle", f"{new!r} is under {pos!r}")
             if p["id"] == d["top"] and new is not None:
                 d["top"] = "owner"
+                d["settings"]["top_decides"] = False
             p["reports_to"] = new
             notes.append(f"moved under {new or 'the top'}")
         if seat:
@@ -1161,6 +1179,7 @@ def update_position(slug: str, pos: str, fields: dict, rev: int | None = None) -
         return notes
 
     _apply(slug, edit, lambda d, n: f"Position {pos}: " + (", ".join(n) or "edited"))
+    _release_top(slug)
     return get(slug)
 
 
@@ -1193,6 +1212,7 @@ def remove_position(slug: str, pos: str, reparent_to: str | None = None) -> dict
         d["positions"].remove(p)
         if d["top"] == pos:
             d["top"] = "owner"
+            d["settings"]["top_decides"] = False
         if d["settings"].get("review_by") == pos:
             d["settings"]["review_by"] = ""
         return len(reports), new or ""
@@ -1203,7 +1223,27 @@ def remove_position(slug: str, pos: str, reparent_to: str | None = None) -> dict
     except OSError:
         pass
     _reassign_requester(slug, pos, heir)
+    _release_top(slug)
+    _release_reviews(slug)
     return get(slug)
+
+
+def _release_top(slug: str) -> None:
+    """Requests handed to the top in the owner's place go back to the owner when that no longer holds."""
+    try:
+        from . import enterprise_policy
+        enterprise_policy.release_top(slug)
+    except Exception:  # noqa: BLE001 - the change stands
+        logger.exception("requests of %s not returned to the owner", slug)
+
+
+def _release_reviews(slug: str) -> None:
+    """Tasks waiting for a reviewer that no longer exists go back to their requester."""
+    try:
+        from . import enterprise_flow
+        enterprise_flow.release_reviews(slug)
+    except Exception:  # noqa: BLE001 - the change stands
+        logger.exception("reviews of %s not released", slug)
 
 
 def _reassign_requester(slug: str, pos: str, heir: str) -> None:
@@ -1230,7 +1270,7 @@ def hire(slug: str, pos: str, topic: str, name: str | None = None, template: str
 
 def hire_custom(slug: str, pos: str, topic: str, *, name: str | None = None, role: str | None = None,
                 model: str | None = None, effort: str | None = None, template: str | None = None,
-                agent_name: str | None = None) -> str:
+                agent_name: str | None = None, sandbox: bool = False) -> str:
     """hire() with the owner's choices: `name` (display name; the folder name is its slug, else the position id),
     `role` (the CLAUDE.md text; default title + job), `model`, `effort`. A position that runs code from outside gets a
     sandboxed agent without key. -> the path."""
@@ -1260,13 +1300,20 @@ def hire_custom(slug: str, pos: str, topic: str, *, name: str | None = None, rol
         fields["model"] = model
     if effort:
         fields["effort"] = effort
+    if sandbox:
+        fields["sandbox"] = True
     if p.get("untrusted_code"):
         fields.update(sandbox=True, keys=[])
     slug_name = agent_name or (re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")[:48] if name else "")
     created = agents.create(topic.strip("/"), agent_name or (slug_name if SLUG_RE.match(slug_name or "") else pos),
                             {**fields, "description": role})
     path = created["path"]
-    update_position(slug, pos, {"agent": path}, rev=load(slug)["rev"])
+    try:
+        update_position(slug, pos, {"agent": path}, rev=load(slug)["rev"])
+    except Exception:  # the seat failed: the agent made for it goes too
+        with contextlib.suppress(Exception):
+            agents.delete(path)
+        raise
     return path
 
 

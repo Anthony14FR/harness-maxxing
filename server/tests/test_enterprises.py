@@ -721,7 +721,13 @@ def test_untrusted_code_seat_check(client, ent, topic):
     agents.update(W, {"keys": []})
     assert _pos(client, "b2", untrusted_code=True, agent=W).status_code == 200
     assert enterprises.untrusted_unfit("acme-group", "b2") == []
-    agents.update(W, {"sandbox": False})
+    with pytest.raises(agents.AgentError) as e:
+        agents.update(W, {"sandbox": False})
+    assert e.value.status == 400 and e.value.code == "untrusted_unfit"
+    with pytest.raises(agents.AgentError):
+        agents.update(W, {"keys": ["K1"]})
+    cur = agents.load(W)
+    agents._save(W, {**cur, "sandbox": False})                  # as an edited file would hold it
     assert enterprises.untrusted_unfit("acme-group", "b2") == ["not_sandboxed"]
     assert enterprises.untrusted_unfit("acme-group", "builder") == []
 
@@ -801,3 +807,37 @@ def test_agent_effort_field(client, topic):
                      json={"effort": "low"})
     assert r.status_code == 200 and r.json()["effort"] == "low"
 
+
+
+def test_untrusted_seat_runs_sandboxed_and_keyless_whatever_the_trigger(client, ent, topic):
+    agents.update(W, {"sandbox": True})
+    assert _pos(client, "b2", untrusted_code=True, agent=W).status_code == 200
+    agents._save(W, {**agents.load(W), "sandbox": False, "keys": ["K1"]})      # as an edited file would hold it
+    for kw in ({}, {"outside": True}):
+        rs = agents.run_settings(W, **kw)
+        assert rs["sandbox"] is True and rs["keys"] == []
+    assert agents.load(W)["keys"] == ["K1"]                                    # the file is untouched
+
+
+def test_settings_warning_when_the_top_decides_without_trust_along_the_chain(client, ent):
+    assert _pos(client, "boss", title="Boss").status_code == 200
+    assert client.patch(f"{E}/acme-group", json={"top": "boss"}).status_code == 200
+    assert _chart(client)["settings_warnings"] == []
+    assert client.patch(f"{E}/acme-group", json={"settings": {"top_decides": True}}).status_code == 200
+    assert _chart(client)["settings_warnings"] == ["top_decides_needs_trust_chain"]
+    assert client.patch(f"{E}/acme-group", json={"settings": {"trust_chain": True}}).status_code == 200
+    assert _chart(client)["settings_warnings"] == []
+    assert client.patch(f"{E}/acme-group", json={"top": "owner"}).status_code == 200
+    assert _chart(client)["settings"]["top_decides"] is False
+
+
+def test_a_failed_seat_removes_the_agent_a_hire_created(client, ent, topic, monkeypatch):
+    _pos(client, "builder", title="Builder")
+    before = set(agents.names("acme", "blog"))
+
+    def boom(*a, **k):
+        raise enterprises.EnterpriseError(409, "stale", "chart changed")
+    monkeypatch.setattr(enterprises, "update_position", boom)
+    r = client.post(f"{E}/acme-group/positions/builder/hire", json={"topic": topic})
+    assert r.status_code == 409
+    assert set(agents.names("acme", "blog")) == before

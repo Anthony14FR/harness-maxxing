@@ -61,7 +61,8 @@ def _chart_line(slug: str, d: dict, pos: dict) -> str:
                   "the company from the profile only, never promise or reveal anything private, and pass a request on with "
                   "`maxxing enterprise route <department> \"<request>\"`.")
     return ("; ".join(parts) + "." + extra + " Work goes through `maxxing enterprise` (run alone on its line): assign, "
-            "done, block, escalate, request, profile [--section S], show.")
+            "done, block, escalate, request (`request hire` asks the owner for a new agent), review (the reviewer), meeting "
+            "(a lead), profile [--section S], show.")
 
 
 def _parts(slug: str, d: dict, pos: dict, about_text: str | None = None) -> tuple[str, list[tuple[str, str]]]:

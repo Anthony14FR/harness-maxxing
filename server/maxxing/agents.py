@@ -697,6 +697,10 @@ def run_settings(path: str, outside: bool = False, session: str | None = None, g
     if desk:                                            # a visitor's text drives it: no key, domain, folder or tool beyond two
         a = {**a, "keys": [], "domains": [], "writable": [], "trust_outside": False, "allowed_tools": [],
              "disallowed_tools": [], "sandbox": True}
+    if not desk:                                        # a seat that runs code from outside: protected and keyless in every run
+        from . import enterprises as _ent
+        if _ent.untrusted_seat(path):
+            a = {**a, "keys": [], "sandbox": True}
     if group:
         from . import agent_rooms
         if agent_rooms.is_member(group, path):
@@ -1262,6 +1266,10 @@ def update(path: str, fields: dict) -> dict:
             f["avatar"] = {**cur["avatar"], **f["avatar"]}
         data = clean({**cur, **{k: v for k, v in f.items() if k in known}}, strict=True)
         boxed = _auto_box(cur, data, f)
+        from . import enterprises as _ent
+        if _ent.untrusted_seat(path) and ((cur["sandbox"] and not data["sandbox"]) or set(data["keys"]) - set(cur["keys"])):
+            raise AgentError(400, "untrusted_unfit", "This agent holds a position that runs code from outside: it stays "
+                             "sandboxed and keeps no key")
         _save(path, data)
     if data["sandbox"] and not cur["sandbox"]:
         from . import agent_guard

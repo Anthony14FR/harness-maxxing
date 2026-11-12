@@ -562,7 +562,7 @@ INTERNALS.md#maxxingenterprises). Slugs (enterprise and position ids): `[a-z0-9]
 | POST | `/api/enterprises/{e}/escalations/{id}/answer` | `{text}` | the escalation (the owner answers at any level; the asker's inbox gets the answer) · `400 invalid` · `404 not_found` · `409 answered` |
 | GET | `/api/enterprises/{e}/meetings` | - | `{items: [{id, topic, organizer ("" = the owner), participants: [position ids], status: open\|closed, replies: [{position, text, at}], minutes, at, deadline}]}` newest first |
 | GET | `/api/enterprises/{e}/meetings/{id}` | - | one meeting (same fields) · `404 not_found` |
-| GET | `/api/enterprises/{e}/requests` | - | `{items: [{id, category, position, text, amount, status: pending\|allowed\|denied, decider: free\|owner\|<position id>, at, outside, deadline, decided_by, decided_at, reason, level}]}` newest first: the organizational requests (`maxxing enterprise request`); `deadline` = when a request waiting for a lead climbs |
+| GET | `/api/enterprises/{e}/requests` | - | `{items: [{id, category, position, text, amount, status: pending\|allowed\|denied, decider: free\|owner\|<position id>, at, outside, deadline, decided_by, decided_at, reason, level, hire?: {title, department, reports_to, job, topic, name, role (first 600 characters), model, effort} for a `hire`}]}` newest first: the organizational requests (`maxxing enterprise request`); `deadline` = when a request waiting for a lead climbs |
 | POST | `/api/enterprises/{e}/requests/{id}` | `{decision: allow\|deny, reason?}` | the request, decided by the owner (the card's Allow / Deny do the same through `POST /api/feed/{id}/act/{action}`) · `404 not_found` · `409 not_pending`. An allowed request grants nothing: a key, a domain or a folder still needs the agent's owner card |
 | GET | `/api/enterprises/{e}/about` | - | `{text, max, note_max}`: the enterprise `CLAUDE.md` (`max` 20000 characters; the cascade given to an occupant's turn (this text, the department notes, the job description) is capped at `note_max` = 3000 characters) |
 | PUT | `/api/enterprises/{e}/about` | `{text}` | `{text, max, note_max}` · `400 too_large` · `409 broken` |
@@ -596,7 +596,8 @@ Enterprise = {id, name, emoji, rev, projects: [slug], top: "owner"|<position id>
                            deliveries), open_tasks (tasks with enterprise.id = e, enterprise.owner = pos, not done),
                            blocked_reason, untrusted_code, note_chars (length of the note before its 3000-character cap), note_cut}],
               cost_today, ceiling_hit, sandbox_available (the server can run protected agents),
-              budget_warnings: [{department ("" = the enterprise envelope), sum, ceiling, agents}]}
+              budget_warnings: [{department ("" = the enterprise envelope), sum, ceiling, agents}],
+              settings_warnings: ["top_decides_needs_trust_chain"] when `top_decides` is on and `trust_chain` is off}
 ```
 Settings added: `top_decides` (bool, false: the top position decides what the owner would, except requests marked outside, `hire`, keys / domains / sandbox / folders changes, `profile_terms`, `desk_live`), `shared_keys` (vault key names every occupant gets at run time, inside the envelopes; never for an `untrusted_code` position), `review_by` (position id of the reviewer, "" = none; must exist).
 `rev` counts the writes of enterprise.json. A move, a seat or a vacate must send the `rev` of the chart it was drawn from

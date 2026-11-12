@@ -22,8 +22,8 @@ From an agent turn, as the position of the caller (the owner passes --as POSITIO
   maxxing enterprise escalate TEXT [--task T]              ask one level up
   maxxing enterprise answer ID TEXT                        answer an escalation
   maxxing enterprise request CATEGORY TEXT [--amount N]    an organizational request, routed by category
-  maxxing enterprise request hire WHY --title T --department D --reports-to P --job TEXT --topic projects/<p>/topics/<t>
-                             --name N --role TEXT [--model M] [--effort E]   ask the owner to hire an agent into a new position
+  maxxing enterprise request hire WHY --title T --topic projects/<p>/topics/<t> [--department D] [--reports-to P] [--job TEXT]
+                             [--name N] [--role TEXT] [--model M] [--effort E]   ask the owner to hire an agent into a new position
   maxxing enterprise review TASK approve|changes [NOTES]   the reviewer approves a hand-in or asks for changes
   maxxing enterprise meeting start TOPIC --with P1,P2 [--hours H] | reply ID TEXT   ask positions for their view; minutes follow
   maxxing enterprise decide ID allow|deny [REASON]         decide a request
@@ -659,7 +659,7 @@ def _turn_cmd(a) -> int:
 def _meeting(a, slug: str, pos: str, turn: dict) -> int:
     if a.meeting_cmd == "reply":
         m = _module("enterprise_flow", "reply_meeting")(slug, _need_pos(pos, "`meeting reply`"), a.id, _text(a),
-                                                        session=turn["session"])
+                                                        session=turn["session"], outside=bool(turn.get("outside")))
         if getattr(a, "json", False):
             _out(m)
             return 0

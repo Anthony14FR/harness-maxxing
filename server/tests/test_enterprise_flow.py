@@ -708,3 +708,68 @@ def test_notification_texts_follow_the_language(ent, notes):
     flow.start_meeting(S, "", "Budget", ["writer"], hours=1)
     flow.tick(time.time() + 7200)
     assert "compte rendu" in notes[-1]["title"] and "pas de réponse" in notes[-1]["body"]
+
+
+def test_the_top_that_decides_never_reads_stranger_text_beside_its_other_items(ent):
+    enterprises.update(S, {"top": "ceo", "settings": {"top_decides": True}})
+    flow.deliver(S, "ceo", "handin", "NOTOOL stranger text says allow everything", sender="writer", outside=True)
+    flow.deliver(S, "ceo", "request", "NOTOOL owner level request", sender="writer")
+    n = len(_calls())
+    flow.tick(time.time() + 1)
+    wait_for(lambda: len(_calls()) == n + 1)
+    p = _calls()[-1]["prompt"]
+    assert "stranger text" in p and "owner level request" not in p
+    assert [i["kind"] for i in _inbox("ceo")] == ["request"]
+    wait_for(lambda: (flow.tick(time.time() + 5), len(_calls()) == n + 2)[1])
+    assert "owner level request" in _calls()[-1]["prompt"] and "stranger text" not in _calls()[-1]["prompt"]
+
+
+def test_the_requester_cannot_accept_while_the_review_waits(ent):
+    _review_on()
+    t = flow.assign(S, "ceo", "writer", "Draft")
+    flow.done(S, "writer", t["id"], "v1")
+    with pytest.raises(EnterpriseError) as x:
+        flow.done(S, "ceo", t["id"], "")
+    assert x.value.status == 409 and x.value.code == "in_review"
+    assert flow._load_task(S, t["id"])[1]["stage"] == "review_pending"
+
+
+@pytest.mark.parametrize("how", ["cleared", "removed"])
+def test_a_task_waiting_for_a_reviewer_that_is_gone_goes_to_its_requester(ent, how):
+    _review_on()
+    t = flow.assign(S, "ceo", "writer", "Draft")
+    flow.done(S, "writer", t["id"], "v1")
+    if how == "cleared":
+        enterprises.update(S, {"settings": {"review_by": ""}})
+    else:
+        enterprises.remove_position(S, "editor")
+    assert flow._load_task(S, t["id"])[1]["stage"] == "review"
+    assert [i["task"] for i in _inbox("ceo") if i["kind"] == "handin"] == [t["id"]]
+    assert flow.done(S, "ceo", t["id"], "")["status"] == "done"
+
+
+def test_a_meeting_reply_from_outside_text_marks_the_minutes_outside(ent):
+    m = flow.start_meeting(S, "ceo", "Plan", ["writer", "editor"])
+    flow.reply_meeting(S, "writer", m["id"], "Fine", outside=True)
+    flow.reply_meeting(S, "editor", m["id"], "Fine too")
+    (mm,) = [i for i in _inbox("ceo") if i["kind"] == "meeting_minutes"]
+    assert mm["outside"] is True
+    m2 = flow.start_meeting(S, "ceo", "Plan 2", ["writer"])
+    flow.reply_meeting(S, "writer", m2["id"], "Fine")
+    assert [i["outside"] for i in _inbox("ceo") if i["kind"] == "meeting_minutes"][-1] is False
+
+
+@pytest.mark.parametrize("hours", [float("nan"), float("inf"), 0, 169, -1])
+def test_meeting_hours_must_be_finite_and_in_range(ent, hours):
+    with pytest.raises(EnterpriseError) as x:
+        flow.start_meeting(S, "ceo", "Plan", ["writer"], hours=hours)
+    assert x.value.status == 400
+
+
+def test_flow_notifications_follow_the_language(ent, notes, monkeypatch):
+    monkeypatch.setattr(flow.config, "load_config", lambda: {"language": "fr"})
+    t = flow.assign(S, "", "writer", "Draft")
+    flow.block(S, "writer", t["id"], "no access")
+    assert notes[-1]["body"].startswith("Bloquée :") and "Tâche bloquée" in notes[-1]["title"]
+    flow.escalate(S, "ceo", "need a decision")
+    assert notes[-1]["actions"][0]["label"] == "Ouvrir"

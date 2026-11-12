@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import importlib
 import logging
+import math
 import os
 import secrets
 import tempfile
@@ -45,6 +46,15 @@ TEXTS = {                                           # owner-facing notification 
     "minutes_head": {"en": "Meeting \"{topic}\" is closed ({n} of {total} replied).",
                      "fr": "La réunion \"{topic}\" est close ({n} réponses sur {total})."},
     "no_reply": {"en": "no reply", "fr": "pas de réponse"},
+    "open": {"en": "Open", "fr": "Ouvrir"},
+    "handin_body": {"en": "Hand-in from {who} for \"{title}\": {summary}\nAccept it with `maxxing enterprise done {id}`, or "
+                          "send it back with `maxxing enterprise assign {owner} \"notes\" --task {id}`.",
+                    "fr": "Livrable de {who} pour \"{title}\" : {summary}\nAcceptez-le avec `maxxing enterprise done {id}`, "
+                          "ou renvoyez-le avec `maxxing enterprise assign {owner} \"notes\" --task {id}`."},
+    "blocked_body": {"en": "Blocked: \"{title}\" ({who}): {reason}", "fr": "Bloquée : \"{title}\" ({who}) : {reason}"},
+    "wait_esc": {"en": "{n} deliveries have waited for {who} ({why}).", "fr": "{n} envois attendent {who} ({why})."},
+    "hops_esc": {"en": "Too many hands on one task (limit {limit}): {what}",
+                 "fr": "Trop d'intervenants sur une même tâche (limite {limit}) : {what}"},
 }
 
 
@@ -386,6 +396,9 @@ def _flush(slug: str, pos: str, now: float) -> str:
         if not items:
             _unwait(slug, pos)
             return "empty"
+        if enterprises.load(slug).get("top") == pos and enterprises.setting(slug, "top_decides"):
+            same = bool(items[0].get("outside"))        # the top that decides for the owner never reads stranger text beside an owner-level request
+            items = [i for i in items if bool(i.get("outside")) == same]
         path = p.get("agent")
         if not path or not agents.exists(path):
             return _wait(slug, pos, now, "vacant")
@@ -444,7 +457,7 @@ def _log_skips(slug: str, asker: str, skipped: list[tuple[str, str]]) -> None:
 def _notify_esc(slug: str, e: dict) -> None:
     _notify(slug, _t("esc_title", name=_name(slug), who=_label(slug, e["position"])), e["text"], level="warning",
             url=f"/enterprises/{slug}/overview", ref=f"enterprise:esc:{slug}:{e['id']}",
-            actions=[{"id": "open", "label": "Open", "style": "link"}], dedupe=f"esc:{slug}:{e['id']}")
+            actions=[{"id": "open", "label": _t("open"), "style": "link"}], dedupe=f"esc:{slug}:{e['id']}")
 
 
 def _send_esc(slug: str, e: dict, note: str = "") -> None:
@@ -573,7 +586,7 @@ def _climb_waits(slug: str, now: float) -> None:
                 _save_flow(slug, fl2)
         if not n or any(e.get("waiting") == pos and e.get("status") == "open" for e in _esc_items(slug)):
             continue
-        _new_esc(slug, pos, f"{n} deliveries have waited for {_label(slug, pos)} ({w.get('why')}).", "", False, "",
+        _new_esc(slug, pos, _t("wait_esc", n=n, who=_label(slug, pos), why=w.get("why")), "", False, "",
                  now, waiting=pos)
 
 
@@ -614,9 +627,8 @@ def _default_parents(slug: str, pos: str, session: str) -> list[dict]:
 
 def assign(slug: str, from_pos: str, to_pos: str, deliverable: str, *, due: str | None = None,
            parent: str | None = None, task: str | None = None, session: str = "", outside: bool = False,
-           approved: bool = False, sender: str = "") -> dict:
-    """A lead (or the owner: from_pos "") gives work to a direct report -> the task (or, across departments when the
-    matrix says so, the request that was opened instead). `task`: send the work back with notes (one more hop).
+           sender: str = "") -> dict:
+    """A lead (or the owner: from_pos "") gives work to a direct report -> the task. `task`: send the work back with notes (one more hop).
     sender: the front desk position passing a visitor's request on (from_pos "": no hierarchy check): the requester."""
     from_pos = _who(from_pos)
     sender = _who(sender) if not from_pos else ""
@@ -658,7 +670,7 @@ def assign(slug: str, from_pos: str, to_pos: str, deliverable: str, *, due: str 
         if to_pos in chain:
             raise EnterpriseError(409, "in_chain", f"{to_pos} is already in the chain of this work")
     if hops > limit:
-        _new_esc(slug, from_pos or to_pos, f"Too many hands on one task (limit {limit}): {deliverable}",
+        _new_esc(slug, from_pos or to_pos, _t("hops_esc", limit=limit, what=deliverable),
                  task or parent or "", outside, session, _now(), to_owner=True)
         raise EnterpriseError(409, "too_many_hops", f"A task changes hands at most {limit} times: the owner was asked")
     sub = {"id": slug, "owner": to_pos, "requester": e0.get("requester", "") if e0 else (from_pos or sender), "parent": (parent or "") if not e0 else e0.get("parent", ""),
@@ -722,10 +734,23 @@ def _reviewer(slug: str) -> str:
 
 def _hand_in(slug: str, e: dict, t: dict, pos: str, task_id: str, summary: str) -> None:
     """Tell the requester a contributor's work is ready to accept."""
-    _tell_requester(slug, e, "handin", f"Hand-in from {_label(slug, pos)} for \"{t['title']}\": {summary}\n"
-                    f"Accept it with `maxxing enterprise done {task_id}`, or send it back with "
-                    f"`maxxing enterprise assign {e.get('owner') or pos} \"notes\" --task {task_id}`.", pos, task_id,
+    _tell_requester(slug, e, "handin", _t("handin_body", who=_label(slug, pos), title=t["title"], summary=summary,
+                                          id=task_id, owner=e.get("owner") or pos), pos, task_id,
                     _t("handin_title"), bool(e.get("outside")))
+
+
+def release_reviews(slug: str) -> None:
+    """With no reviewer left, the tasks that waited for one go to their requester as ordinary hand-ins."""
+    if _reviewer(slug):
+        return
+    for t in list(_tasks().load(copy_=False)["tasks"]):
+        e = _ent(t, slug)
+        if e and e.get("stage") == "review_pending" and t.get("status") != "done":
+            _task_call(_tasks().update_task, t["id"], {"enterprise": {**e, "stage": "review"}})
+            _hand_in(slug, e, t, e.get("owner") or "", t["id"], e.get("summary") or "")
+            enterprises.log(slug, "handin", f"No reviewer left: \"{t['title']}\" goes to its requester", by="server",
+                            position=e.get("owner") or "", task=t["id"])
+    enterprises.invalidate(slug)
 
 
 def review(slug: str, pos: str, task_id: str, decision: str, notes: str = "", *, session: str = "") -> dict:
@@ -779,6 +804,8 @@ def done(slug: str, pos: str, task_id: str, summary: str, *, session: str = "") 
     summary = (summary or "").strip()[:2000]
     api = _tasks()
     if pos == "" or pos == (e.get("requester") or ""):
+        if pos and e.get("stage") == "review_pending" and _reviewer(slug):
+            raise EnterpriseError(409, "in_review", "This task waits for its review: the reviewer comes first")
         row = _task_call(api.update_task, task_id, {"status": "done", "enterprise": {**e, "stage": "", "accepted_in": session}})
         enterprises.log(slug, "accept", f"{_label(slug, pos)} accepts the task: {t['title']}", by=pos or "owner",
                         position=e.get("owner", ""), task=task_id, session=session)
@@ -819,7 +846,7 @@ def block(slug: str, pos: str, task_id: str, reason: str, *, session: str = "") 
         raise EnterpriseError(403, "not_yours", "Only the owner of the task blocks it")
     reason = (reason or "").strip()[:600]
     row = _task_call(_tasks().update_task, task_id, {"enterprise": {**e, "stage": "blocked", "reason": reason}})
-    _tell_requester(slug, e, "note", f"Blocked: \"{t['title']}\" ({_label(slug, e.get('owner', ''))}): {reason}", pos,
+    _tell_requester(slug, e, "note", _t("blocked_body", title=t["title"], who=_label(slug, e.get("owner", "")), reason=reason), pos,
                     task_id, _t("blocked_title"), bool(e.get("outside")))
     enterprises.log(slug, "block", f"{_label(slug, pos)} is blocked: {reason}", by=pos or "owner", position=e.get("owner", ""),
                     task=task_id, session=session)
@@ -885,7 +912,7 @@ def start_meeting(slug: str, organizer: str, topic: str, participants: list[str]
         h = float(hours) if hours is not None else MEETING_H
     except (TypeError, ValueError):
         raise EnterpriseError(400, "invalid", "hours is a number") from None
-    if h <= 0 or h > 168:
+    if not math.isfinite(h) or h <= 0 or h > 168:
         raise EnterpriseError(400, "invalid", "hours is between 0 and 168")
     now = _now()
     m = {"id": "m_" + secrets.token_hex(3), "topic": agents._utf8(topic)[:TEXT_MAX], "organizer": organizer,
@@ -905,7 +932,7 @@ def start_meeting(slug: str, organizer: str, topic: str, participants: list[str]
     return m
 
 
-def reply_meeting(slug: str, pos: str, mid: str, text: str, *, session: str = "") -> dict:
+def reply_meeting(slug: str, pos: str, mid: str, text: str, *, session: str = "", outside: bool = False) -> dict:
     """A participant answers once -> the meeting with the replies so far (the last reply closes it)."""
     pos = _who(pos)
     _chart(slug)
@@ -923,7 +950,7 @@ def reply_meeting(slug: str, pos: str, mid: str, text: str, *, session: str = ""
             raise EnterpriseError(403, "not_invited", "Only the invited positions reply")
         if any(r["position"] == pos for r in m["replies"]):
             raise EnterpriseError(409, "replied", "You already replied to this meeting")
-        m["replies"].append({"position": pos, "text": agents._utf8(text)[:TEXT_MAX], "at": _now()})
+        m["replies"].append({"position": pos, "text": agents._utf8(text)[:TEXT_MAX], "at": _now(), "outside": bool(outside)})
         _save_meet(slug, items)
         snap = {**m, "replies": list(m["replies"])}
     enterprises.log(slug, "meeting_reply", f"{_label(slug, pos)} replies on {mid}: {text}", by=pos, position=pos,
@@ -955,7 +982,8 @@ def _close_meeting(slug: str, mid: str, now: float) -> None:
     enterprises.log(slug, "meeting", f"Meeting closed: {snap['topic']}", by="server", position=snap["organizer"])
     org = snap["organizer"]
     if org and enterprises.position(slug, org):
-        _put(slug, org, "meeting_minutes", snap["minutes"], "", "", bool(snap.get("outside")), "")
+        _put(slug, org, "meeting_minutes", snap["minutes"], "", "",
+             bool(snap.get("outside")) or any(r.get("outside") for r in snap["replies"]), "")
     else:
         _notify(slug, _t("minutes_title", name=_name(slug), topic=snap["topic"]), snap["minutes"],
                 url=f"/enterprises/{slug}/overview", dedupe=f"meeting:{slug}:{mid}")

@@ -622,7 +622,7 @@ def _handler(a) -> int:
             role = (agents.folder(path) / "CLAUDE.md").read_text(encoding="utf-8", errors="replace")
         except OSError:
             role = ""
-        print(json.dumps({**{k: d.get(k) for k in ("path", "display_name", "enabled", "model", "permission_mode",
+        print(json.dumps({**{k: d.get(k) for k in ("path", "display_name", "enabled", "model", "effort", "permission_mode",
                                                     "approvals", "trust_outside", "keys", "telegram", "silent", "sandbox", "domains",
                                                     "writable", "rules", "subagent", "chat_model", "limits", "triggers")},
                           "claude_md": role, "crons": [{k: j.get(k) for k in ("id", "name", "schedule", "prompt", "enabled")}
