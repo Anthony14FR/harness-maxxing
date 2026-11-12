@@ -666,7 +666,10 @@ def run_insights(slug: str, now: float | None = None) -> dict | None:
     made = _tasks(slug, table, wk)
     enterprises.log(slug, "insights", f"Front desk insights {wk}: {len(convs)} conversations, {len(added)} suggested "
                     f"answers, {made} task(s)", by="server")
-    _notify(slug, f"Front desk insights {wk}", f"{len(convs)} conversations, {len(added)} questions without an answer.")
+    fr = str(config.load_config().get("language") or "en") == "fr"
+    _notify(slug, f"Analyse de l'accueil {wk}" if fr else f"Front desk insights {wk}",
+            f"{len(convs)} conversations, {len(added)} questions sans réponse." if fr
+            else f"{len(convs)} conversations, {len(added)} questions without an answer.")
     enterprises.invalidate(slug)
     return insights(slug)
 

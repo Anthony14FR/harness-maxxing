@@ -16,6 +16,7 @@ import re
 import secrets
 import threading
 import time
+import unicodedata
 from typing import Any, Callable
 
 from . import agents, config, enterprises
@@ -48,6 +49,7 @@ CATEGORIES: dict[str, dict] = {
     "profile_terms": _row("Edit prices or terms in the profile", "owner", "owner", "owner"),
     "desk_live": _row("Put the front desk live", "owner", "owner", "owner"),
     "hire_remove": _row("Hire or remove a permanent agent, change keys, domains, sandbox, folders", "owner", "owner", "owner"),
+    "hire": _row("Create a position and hire its agent", "owner", "owner", "owner"),
     "spending_high": _row("Declared spending above the threshold", "owner", "owner", "owner", "declared"),
     "recurring": _row("Any new recurring cost", "owner", "owner", "owner", "declared"),
     "publish": _row("Publish publicly, write to a customer, anything irreversible", "owner", "owner", "owner", "role"),
@@ -56,6 +58,86 @@ NEEDS_GRANT = ("deliver_cross", "hire_remove", "worker", "reseat")          # ca
 GRANT_NOTE = ("Allowing a request grants nothing: a key, a domain or a folder it needs still comes from the "
               "owner's card of the agent.")
 _NEEDS_RE = re.compile(r"\b(keys?|domains?|folders?|sandbox|secret|token|password)\b", re.I)
+TOP_NEVER = ("hire", "hire_remove", "profile_terms", "desk_live")        # stay with the owner even when the top decides
+
+LABELS_FR = {
+    "assign_own": "Confier à un subordonné direct, lire le profil, écrire dans son département",
+    "deliver_cross": "Livrer dans le dossier d'un autre département",
+    "assign_cross": "Confier une tâche à un autre département",
+    "edit_job": "Modifier la fiche de poste d'un subordonné",
+    "worker": "Créer un intervenant à partir d'un modèle approuvé",
+    "profile_edit": "Modifier le profil de l'entreprise (hors prix et conditions)",
+    "spending": "Dépense déclarée jusqu'au seuil du département",
+    "raise_budget": "Augmenter le budget quotidien d'un subordonné dans l'enveloppe",
+    "reseat": "Réaffecter un agent à un poste vacant de son équipe",
+    "profile_terms": "Modifier les prix ou conditions du profil",
+    "desk_live": "Mettre l'accueil en ligne",
+    "hire_remove": "Embaucher ou retirer un agent permanent, changer clés, domaines, bac à sable, dossiers",
+    "hire": "Créer un poste et embaucher son agent",
+    "spending_high": "Dépense déclarée au-dessus du seuil",
+    "recurring": "Tout nouveau coût récurrent",
+    "publish": "Publier publiquement, écrire à un client, tout ce qui est irréversible",
+}
+# Server-written texts by language (config `language`); English is the fallback.
+TEXTS = {
+    "asks": {"en": "{name} asks: {label}", "fr": "{name} demande : {label}"},
+    "amount_line": {"en": "\nAmount: {x:g} USD", "fr": "\nMontant : {x:g} USD"},
+    "allow": {"en": "Allow", "fr": "Autoriser"},
+    "deny": {"en": "Deny", "fr": "Refuser"},
+    "open": {"en": "Open", "fr": "Ouvrir"},
+    "outside_tag": {"en": " [from outside text]", "fr": " [issu d'un texte extérieur]"},
+    "req_to_lead": {"en": "Request {id} from {who} ({cat}){out}: {text}",
+                    "fr": "Demande {id} de {who} ({cat}){out} : {text}"},
+    "req_amount": {"en": " Amount: {x:g} USD.", "fr": " Montant : {x:g} USD."},
+    "req_decide": {"en": " Decide with: maxxing enterprise decide {id} allow|deny \"<reason>\"",
+                   "fr": " Décidez avec : maxxing enterprise decide {id} allow|deny \"<motif>\""},
+    "decision": {"en": "Your request {id} ({cat}) was {word} by {who}.",
+                 "fr": "Votre demande {id} ({cat}) a été {word} par {who}."},
+    "allowed": {"en": "allowed", "fr": "acceptée"},
+    "denied": {"en": "denied", "fr": "refusée"},
+    "the_owner": {"en": "the owner", "fr": "le propriétaire"},
+    "grant_note": {"en": GRANT_NOTE,
+                   "fr": "Accepter une demande n'accorde rien : une clé, un domaine ou un dossier qu'elle suppose "
+                         "vient toujours de la fiche de l'agent, côté propriétaire."},
+    "owner_applies": {"en": "Allowed: the owner applies it.", "fr": "Acceptée : le propriétaire l'applique."},
+    "applies_title": {"en": "{label}: allowed, you apply it", "fr": "{label} : acceptée, à vous de l'appliquer"},
+    "applies_body": {"en": "{who} allowed {pos}: {text} Nothing changed yet: you apply it.",
+                     "fr": "{who} a accepté pour {pos} : {text} Rien n'a encore changé : c'est à vous de l'appliquer."},
+    "job_done": {"en": "Done: the job description of {pos} was updated.",
+                 "fr": "Fait : la fiche de poste de {pos} est mise à jour."},
+    "seat_done": {"en": "Done: {pos} is now held by {agent}.", "fr": "Fait : {pos} est maintenant tenu par {agent}."},
+    "hire_done": {"en": "Done: the position {pos} was created and {name} is hired.",
+                  "fr": "Fait : le poste {pos} est créé et {name} est embauché."},
+    "hire_failed": {"en": "Not done: the position could not be created ({reason}).",
+                    "fr": "Non fait : le poste n'a pas pu être créé ({reason})."},
+    "hire_card": {"en": "\nPosition: {title}\nDepartment: {department}\nReports to: {reports_to}\nTopic: {topic}\nAgent: {name}",
+                  "fr": "\nPoste : {title}\nDépartement : {department}\nRattaché à : {reports_to}\nSujet : {topic}\nAgent : {name}"},
+    "env_dept": {"en": "The department {name}", "fr": "Le département {name}"},
+    "env_ent": {"en": "The enterprise {name}", "fr": "L'entreprise {name}"},
+    "env_title": {"en": "{label} reached its daily budget", "fr": "{label} a atteint son budget quotidien"},
+    "env_body": {"en": "{usd:g} USD spent today: its agents wait until tomorrow.",
+                 "fr": "{usd:g} USD dépensés aujourd'hui : ses agents attendent demain."},
+    "env_refusal": {"en": "{label} reached its daily budget ({usd:g} USD): runs resume tomorrow.",
+                    "fr": "{label} a atteint son budget quotidien ({usd:g} USD) : les exécutions reprennent demain."},
+}
+
+
+def _lang() -> str:
+    try:
+        return "fr" if str(config.load_config().get("language") or "en") == "fr" else "en"
+    except Exception:  # noqa: BLE001 - a text never fails a request
+        return "en"
+
+
+def _t(key: str, **kw: Any) -> str:
+    row = TEXTS[key]
+    text = row.get(_lang()) or row["en"]
+    return text.format(**kw) if kw else text
+
+
+def _label(category: str) -> str:
+    en = CATEGORIES.get(category, {}).get("label", category)
+    return LABELS_FR.get(category, en) if _lang() == "fr" else en
 
 
 def _now(now: float | None = None) -> float:
@@ -167,6 +249,20 @@ def _grant(slug: str, pos: str, category: str, amount: float | None, now: float)
     return best[1] if best else None
 
 
+def _top_decides(slug: str) -> bool:
+    return bool(enterprises.setting(slug, "top_decides"))
+
+
+def _owner_or_top(slug: str, category: str) -> tuple[str, str]:
+    """What would go to the owner goes to the top position when the setting is on (never the invariants)."""
+    if category in TOP_NEVER or not _top_decides(slug):
+        return "owner", ""
+    top = _data(slug).get("top")
+    if isinstance(top, str) and top != "owner" and enterprises.position(slug, top):
+        return "lead", top
+    return "owner", ""
+
+
 def _route(slug: str, pos: str, category: str, amount: float | None, outside: bool,
            now: float | None = None) -> tuple[str, str]:
     """(kind, who): free | lead | owner, and the deciding position for a lead. Structure only: it does not look at
@@ -174,7 +270,7 @@ def _route(slug: str, pos: str, category: str, amount: float | None, outside: bo
     if outside or category not in CATEGORIES:
         return "owner", ""                                   # invariant 1; an unknown category is never delegated
     if category == "spending" and amount is None:
-        return "owner", ""                                   # undeclared spending
+        return _owner_or_top(slug, category)                 # undeclared spending
     granted = _grant(slug, pos, category, amount, _now(now))
     if granted:
         return "lead", granted
@@ -186,8 +282,8 @@ def _route(slug: str, pos: str, category: str, amount: float | None, outside: bo
     row = CATEGORIES[category][profile if profile in PROFILES else "balanced"]
     if row == "lead":
         lead = enterprises.lead_of(slug, pos)
-        return ("lead", lead) if lead else ("owner", "")     # the top of the chart reports to the owner
-    return row, ""
+        return ("lead", lead) if lead else _owner_or_top(slug, category)     # the top of the chart reports to the owner
+    return (row, "") if row != "owner" else _owner_or_top(slug, category)
 
 
 def decider(slug: str, pos: str, category: str, *, amount: float | None = None, outside: bool = False) -> str:
@@ -254,10 +350,15 @@ def _notify(slug: str, r: dict) -> None:
     """The Allow / Deny / Open card of a request that waits for the owner."""
     ref = f"enterprise:{slug}:{r['id']}"
     name = _title(slug, r["position"])
-    title = f"{name} asks: {CATEGORIES.get(r['category'], {}).get('label', r['category'])}"
-    body = r["text"] + (f"\nAmount: {r['amount']:g} USD" if isinstance(r.get("amount"), (int, float)) else "")
-    actions = [{"id": "allow", "label": "Allow", "style": "primary"}, {"id": "deny", "label": "Deny", "style": "danger"},
-               {"id": "open", "label": "Open", "style": "link"}]
+    title = _t("asks", name=name, label=_label(r["category"]))
+    body = r["text"] + (_t("amount_line", x=r["amount"]) if isinstance(r.get("amount"), (int, float)) else "")
+    if r["category"] == "hire" and isinstance(r.get("payload"), dict):
+        p = r["payload"]
+        body += _t("hire_card", title=p.get("title") or "", department=p.get("department") or "-",
+                   reports_to=p.get("reports_to") or r["position"], topic=p.get("topic") or "",
+                   name=p.get("name") or p.get("title") or "")
+    actions = [{"id": "allow", "label": _t("allow"), "style": "primary"},
+               {"id": "deny", "label": _t("deny"), "style": "danger"}, {"id": "open", "label": _t("open"), "style": "link"}]
     url = f"/enterprises/{slug}"
     try:
         from . import enterprise_reports
@@ -280,11 +381,11 @@ def _hand_to(slug: str, r: dict, who: str) -> None:
     if who == "owner":
         _notify(slug, r)
         return
-    out = " [from outside text]" if r.get("outside") else ""
+    out = _t("outside_tag") if r.get("outside") else ""
     _deliver(slug, who, "request",
-             f"Request {r['id']} from {_title(slug, r['position'])} ({r['category']}){out}: {r['text']}"
-             + (f" Amount: {r['amount']:g} USD." if isinstance(r.get("amount"), (int, float)) else "")
-             + f" Decide with: maxxing enterprise decide {r['id']} allow|deny \"<reason>\"",
+             _t("req_to_lead", id=r["id"], who=_title(slug, r["position"]), cat=r["category"], out=out, text=r["text"])
+             + (_t("req_amount", x=r["amount"]) if isinstance(r.get("amount"), (int, float)) else "")
+             + _t("req_decide", id=r["id"]),
              sender=r["position"], outside=bool(r.get("outside")), session=r.get("session") or "")
 
 
@@ -307,6 +408,9 @@ def request(slug: str, pos: str, category: str, text: str, *, amount: float | No
         if isinstance(amount, bool) or not isinstance(amount, (int, float)) or amount != amount or not 0 <= amount <= 1e9:
             raise EnterpriseError(400, "invalid", "amount: a number of USD")
         amount = round(float(amount), 2)
+    if category == "hire" and not (isinstance(payload, dict) and str(payload.get("title") or "").strip()
+                                   and str(payload.get("topic") or "").strip()):
+        raise EnterpriseError(400, "invalid", "A hire request needs a title and a topic")
     now = time.time()
     kind, who = _route(slug, pos, category, amount, outside, now)
     if kind == "lead" and not _ready(slug, who):
@@ -337,7 +441,7 @@ def request(slug: str, pos: str, category: str, text: str, *, amount: float | No
 
 
 def _needs_note(r: dict) -> str:
-    return GRANT_NOTE if r["category"] in NEEDS_GRANT or _NEEDS_RE.search(r["text"]) else ""
+    return _t("grant_note") if r["category"] in NEEDS_GRANT or _NEEDS_RE.search(r["text"]) else ""
 
 
 def decide(slug: str, req_id: str, decision: str, *, reason: str = "", by: str | None = None, via: str = "",
@@ -357,7 +461,9 @@ def decide(slug: str, req_id: str, decision: str, *, reason: str = "", by: str |
             raise EnterpriseError(404, "not_found", f"Request {req_id!r} not found")
         if r["status"] != "pending":
             raise EnterpriseError(409, "not_pending", "This request is already decided")
-        if not owner:
+        top_ok = (not owner and r["decider"] == by and by == _data(slug).get("top") and _top_decides(slug)
+                  and r["category"] not in TOP_NEVER and not r.get("outside"))
+        if not owner and not top_ok:
             if by == r["position"]:
                 raise EnterpriseError(403, "self_decision", "Nobody decides their own request")
             if by not in enterprises.ancestors(slug, r["position"]):
@@ -368,17 +474,19 @@ def decide(slug: str, req_id: str, decision: str, *, reason: str = "", by: str |
         r.update(status="allowed" if decision == "allow" else "denied", decided_by="owner" if owner else by,
                  decided_at=now, reason=reason)
         _write(slug, items)
-    who = "the owner" if owner else _title(slug, by)
+    who = _t("the_owner") if owner else _title(slug, by)
     word = "allowed" if decision == "allow" else "denied"
     note = _needs_note(r) if decision == "allow" else ""
     applied = _run_payload(slug, r) if decision == "allow" else ""
+    shown = _t("owner_applies") if applied == OWNER_APPLIES else applied
     _deliver(slug, r["position"], "decision",
-             f"Your request {r['id']} ({r['category']}) was {word} by {who}." + (f" {reason}" if reason else "")
-             + (f" {applied}" if applied else "") + (f" {note}" if note else ""), sender="" if owner else by,
+             _t("decision", id=r["id"], cat=r["category"], word=_t(word), who=who) + (f" {reason}" if reason else "")
+             + (f" {shown}" if shown else "") + (f" {note}" if note else ""), sender="" if owner else by,
              outside=bool(r.get("outside")) or bool(outside), session=r.get("session") or "")
     if applied == OWNER_APPLIES and not owner:
         _tell_owner_applies(slug, r, who)
-    enterprises.log(slug, f"request_{word}", f"{r['category']}: {r['text']}" + (f" ({reason})" if reason else ""),
+    enterprises.log(slug, f"request_{word}", f"{r['category']}: {r['text']}" + (f" ({reason})" if reason else "")
+                    + (" (the top position decided its own request)" if top_ok and by == r["position"] else ""),
                     by="owner" if owner else by, position=r["position"], session=r.get("session") or "")
     with contextlib.suppress(Exception):
         from . import feed
@@ -394,14 +502,57 @@ APPLIED_BY_OWNER = ("raise_budget", "profile_edit", "deliver_cross", "edit_job",
 
 def _tell_owner_applies(slug: str, r: dict, who: str) -> None:
     """A lead allowed something only the owner can carry out: the owner hears it (no button, nothing to decide)."""
-    label = CATEGORIES.get(r["category"], {}).get("label", r["category"])
-    body = f"{who} allowed {_title(slug, r['position'])}: {r['text']} Nothing changed yet: you apply it."
+    label = _label(r["category"])
+    body = _t("applies_body", who=who, pos=_title(slug, r["position"]), text=r["text"])
     try:
         from . import enterprise_reports
-        enterprise_reports.notify_owner(slug, f"{label}: allowed, you apply it", body, level="info",
+        enterprise_reports.notify_owner(slug, _t("applies_title", label=label), body, level="info",
                                         url=f"/enterprises/{slug}", dedupe=f"enterprise:{slug}:{r['id']}:applies")
     except Exception:  # noqa: BLE001
         log.exception("enterprise %s: owner notification failed", slug)
+
+
+def _position_id(slug: str, title: str) -> str:
+    """A free position id made from a title (lowercase letters, digits, dashes)."""
+    ascii_ = unicodedata.normalize("NFKD", title).encode("ascii", "ignore").decode().lower()
+    base = re.sub(r"[^a-z0-9]+", "-", ascii_).strip("-")[:40] or "position"
+    taken = {p["id"] for p in (_data(slug).get("positions") or [])} | set(getattr(enterprises, "RESERVED_POS", ()))
+    pid, n = base, 2
+    while pid in taken:
+        pid, n = f"{base}-{n}", n + 1
+    return pid
+
+
+def _hire(slug: str, r: dict) -> str:
+    """An allowed hire request: create the position under its lead, then the agent that holds it. A failure leaves
+    nothing behind (the position is removed again). -> a sentence for the requester."""
+    p = r["payload"] if isinstance(r.get("payload"), dict) else {}
+    title = " ".join(str(p.get("title") or "").split())[:80]
+    topic = str(p.get("topic") or "").strip()
+    lead = p.get("reports_to") if enterprises.position(slug, p.get("reports_to") or "") else r["position"]
+    pid = _position_id(slug, title)
+    try:
+        enterprises.add_position(slug, {"id": pid, "title": title, "reports_to": lead,
+                                        "department": str(p.get("department") or ""), "job": str(p.get("job") or "")})
+    except (EnterpriseError, agents.AgentError) as e:
+        enterprises.log(slug, "request_failed", f"The allowed request {r['id']} could not be carried out", by="policy",
+                        position=r["position"])
+        return _t("hire_failed", reason=e.message)
+    name = str(p.get("name") or "").strip() or title
+    kw = {k: p[k] for k in ("model", "effort") if p.get(k)}
+    if p.get("role"):
+        kw["role"] = str(p["role"])
+    try:
+        enterprises.hire_custom(slug, pid, topic, name=name, **kw)
+    except Exception as e:  # noqa: BLE001 - the decision stands; the half-made position goes
+        log.exception("enterprise %s: hire failed", slug)
+        with contextlib.suppress(Exception):
+            enterprises.remove_position(slug, pid)
+        enterprises.log(slug, "request_failed", f"The allowed request {r['id']} could not be carried out", by="policy",
+                        position=r["position"])
+        return _t("hire_failed", reason=getattr(e, "message", None) or str(e)[:200])
+    enterprises.log(slug, "hire", f"{title} hired ({pid})", by="policy", position=pid)
+    return _t("hire_done", pos=title, name=name)
 
 
 def _run_payload(slug: str, r: dict) -> str:
@@ -410,6 +561,8 @@ def _run_payload(slug: str, r: dict) -> str:
     OWNER_APPLIES when the owner still has to apply it."""
     p = r.get("payload") if isinstance(r.get("payload"), dict) else {}
     cat, pos = r.get("category"), r["position"]
+    if cat == "hire":
+        return _hire(slug, r)
     try:
         if cat == "assign_cross" and p.get("to_pos"):
             from . import enterprise_flow
@@ -423,11 +576,11 @@ def _run_payload(slug: str, r: dict) -> str:
             rev = enterprises.load(slug)["rev"]
             if cat == "edit_job":
                 enterprises.update_position(slug, target, {"job": p["job"]})
-                return f"Done: the job description of {_title(slug, target)} was updated."
+                return _t("job_done", pos=_title(slug, target))
             if (enterprises.position(slug, target) or {}).get("agent"):
                 return OWNER_APPLIES
             enterprises.update_position(slug, target, {"agent": p["agent"]}, rev=rev)
-            return f"Done: {_title(slug, target)} is now held by {p['agent']}."
+            return _t("seat_done", pos=_title(slug, target), agent=p["agent"])
     except Exception:  # noqa: BLE001 - the decision stands; the log says why nothing was done
         log.exception("enterprise %s: allowed request failed", slug)
         enterprises.log(slug, "request_failed", f"The allowed request {r['id']} could not be carried out", by="policy",
@@ -552,12 +705,12 @@ def _levels(path: str) -> tuple[str, list[tuple[str, str, float, list[str], Call
     env = ((d.get("departments") or {}).get(dept) or {}).get("envelope") or {}
     if dept and (env.get("usd_per_day") or 0) > 0:
         in_dept = [p for p in d["positions"] if p["department"] == dept]
-        out.append((f"department:{dept}", f"The department {(d['departments'][dept].get('name') or dept)}",
+        out.append((f"department:{dept}", _t("env_dept", name=d["departments"][dept].get("name") or dept),
                     float(env["usd_per_day"]), [p["agent"] for p in in_dept if p["agent"]],
                     lambda ids=[p["id"] for p in in_dept]: _workers_cost(slug, ids)))
     top = d.get("envelope") or {}
     if (top.get("usd_per_day") or 0) > 0:
-        out.append(("enterprise", f"The enterprise {d.get('name') or slug}", float(top["usd_per_day"]),
+        out.append(("enterprise", _t("env_ent", name=d.get("name") or slug), float(top["usd_per_day"]),
                     [p["agent"] for p in d["positions"] if p["agent"]], lambda: _workers_cost(slug, None)))
     return slug, out
 
@@ -597,7 +750,7 @@ def _tell(slug: str, key: str, label: str, usd: float) -> None:
 
 
 def _send_tell(slug: str, ref: str, label: str, usd: float) -> None:
-    title, body = f"{label} reached its daily budget", f"{usd:g} USD spent today: its agents wait until tomorrow."
+    title, body = _t("env_title", label=label), _t("env_body", usd=usd)
     try:
         from . import enterprise_reports
         enterprise_reports.notify_owner(slug, title, body, level="warning", url=f"/enterprises/{slug}", dedupe=ref)
@@ -620,7 +773,7 @@ def over_ceiling(path: str) -> str | None:
         for key, label, usd, members, workers in levels:
             if _usage(members, workers=workers)[0] >= usd:
                 _tell(slug, key, label, usd)
-                return f"{label} reached its daily budget ({usd:g} USD): runs resume tomorrow."
+                return _t("env_refusal", label=label, usd=usd)
     except Exception:  # noqa: BLE001
         log.exception("envelope check failed (%s)", path)
     return None

@@ -153,6 +153,18 @@ def test_a_failed_call_falls_back_to_the_raw_list(client, topic, mx, monkeypatch
     assert r["raw"] is True and "FAIL please" in r["text"] and r["cost"] == 0
 
 
+def test_raw_list_and_titles_in_french(client, topic, mx, monkeypatch):
+    _setup(client, topic, envelope={"usd_per_day": 1})
+    _quiet(monkeypatch)
+    monkeypatch.setattr(reports, "_lang", lambda: "fr")
+    monkeypatch.setattr(agents, "day_cost", lambda path, when=None, metas=None, cold=False: 5.0)
+    agents.post(W, "result", "Brouillon prêt")
+    r = reports.build(S, "daily", time.time() + 1)
+    assert "Brouillon prêt" in r["text"] and "1 résultat" in r["text"] and "le budget quotidien est atteint" in r["text"]
+    assert "Résumé du jour - Acme Group" in (reports._dir(S) / f"{r['name']}.md").read_text(encoding="utf-8")
+    assert reports._t("t_weekly", name="X", day="d").startswith("Bilan de la semaine")
+
+
 def test_per_lead_adds_one_call_per_lead(client, topic, mx, monkeypatch):
     _setup(client, topic, settings={"digest": {"per_lead": True}})
     _quiet(monkeypatch)
