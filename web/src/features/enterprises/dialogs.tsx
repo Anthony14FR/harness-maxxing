@@ -4,7 +4,8 @@ import { useNavigate } from 'react-router'
 import { useLang, useT } from '@/i18n'
 import { errorMessage, isApiError } from '@/lib/api'
 import { enterpriseRoute, useAddPosition, useAgentTemplates, useCreateEnterprise, useEnterpriseTemplates, useEnterprises, useHirePosition, useWorkspace } from '@/lib/queries'
-import type { Enterprise, Position } from '@/lib/types'
+import type { AgentEffort, Enterprise, Position } from '@/lib/types'
+import { EffortSelect, ModelSelect } from '@/features/agents/parts'
 import { SLUG_RE, cn, slugify } from '@/lib/utils'
 import { Button, Checkbox, Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, FormField, Input, Select, Sensitive, Textarea, toast } from '@/components/ui'
 
@@ -232,9 +233,17 @@ export function HireDialog({ enterprise: e, position, open, onOpenChange, onHire
   const suggested = position.suggested_template && (agentTemplates || []).some((x) => x.id === position.suggested_template) ? position.suggested_template : NONE
   const [topic, setTopic] = React.useState('')
   const [template, setTemplate] = React.useState<string | null>(null)
+  const [name, setName] = React.useState('')
+  const [role, setRole] = React.useState('')
+  const [model, setModel] = React.useState('')
+  const [effort, setEffort] = React.useState<AgentEffort>('')
   React.useEffect(() => {
     if (open) {
       setTemplate(null)
+      setName('')
+      setRole('')
+      setModel('')
+      setEffort('')
       setTopic((cur) => (topics.some((x) => x.value === cur) ? cur : topics[0]?.value || ''))
       hire.reset()
     }
@@ -244,7 +253,16 @@ export function HireDialog({ enterprise: e, position, open, onOpenChange, onHire
     ev.preventDefault()
     if (!topic) return
     hire.mutate(
-      { id: e.id, pos: position.id, topic, template: agentTemplates || template !== null ? (template ?? suggested) === NONE ? '' : (template ?? suggested) : undefined },
+      {
+        id: e.id,
+        pos: position.id,
+        topic,
+        template: agentTemplates || template !== null ? (template ?? suggested) === NONE ? '' : (template ?? suggested) : undefined,
+        name: name.trim() || undefined,
+        role: role.trim() || undefined,
+        model: model || undefined,
+        effort: effort || undefined,
+      },
       {
         onSuccess: (r) => {
           toast.success(t('ent.hire.done'))
@@ -272,6 +290,20 @@ export function HireDialog({ enterprise: e, position, open, onOpenChange, onHire
           <FormField label={t('ent.hire.template')} hint={t('ent.hire.templateHint')}>
             <Select value={template ?? suggested} onValueChange={setTemplate} options={templates} />
           </FormField>
+          <FormField label={t('ent.hire.name')} hint={t('ent.hire.nameHint')}>
+            <Input value={name} onChange={(ev) => setName(ev.target.value)} placeholder={position.title} maxLength={60} autoComplete="off" />
+          </FormField>
+          <FormField label={t('ent.hire.role')} hint={t('ent.hire.roleHint')}>
+            <Textarea value={role} onChange={(ev) => setRole(ev.target.value)} minRows={3} maxRows={10} maxLength={8000} />
+          </FormField>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <FormField label={t('agents.field.model')}>
+              <ModelSelect value={model} onChange={setModel} />
+            </FormField>
+            <FormField label={t('agents.field.effort')}>
+              <EffortSelect value={effort} onChange={setEffort} />
+            </FormField>
+          </div>
           {hire.error && (
             <p role="alert" className="text-[13px] text-destructive">
               {errorMessage(hire.error)}

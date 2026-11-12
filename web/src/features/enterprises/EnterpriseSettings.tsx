@@ -3,14 +3,15 @@
 // for the Save bar (one PATCH); the linked projects apply at once (PUT, a refusal asks before vacating positions).
 import * as React from 'react'
 import { useNavigate } from 'react-router'
-import { Download, Plus, Trash2 } from 'lucide-react'
+import { Download, Plus, Trash2, TriangleAlert } from 'lucide-react'
 import { useT, type TKey } from '@/i18n'
 import { errorMessage, isApiError } from '@/lib/api'
-import { enterpriseExportUrl, useDeleteEnterprise, usePatchEnterprise, usePutEnterpriseProjects, useWorkspace } from '@/lib/queries'
+import { enterpriseExportUrl, useDeleteEnterprise, usePatchEnterprise, usePutEnterpriseProjects, useSecrets, useSplitBudget, useUsage, useWorkspace } from '@/lib/queries'
 import type { Enterprise, EnterpriseAutonomy, EnterpriseCommunication, EnterpriseSettings as Settings, EnterpriseWorkers } from '@/lib/types'
 import { cn, slugify } from '@/lib/utils'
 import { Button, Checkbox, confirm, FormField, Input, Select, Sensitive, Switch, Textarea, toast } from '@/components/ui'
-import { SettingRow } from '@/features/common'
+import { Callout, SettingRow } from '@/features/common'
+import { fmtCost } from '@/pages/sessions/util'
 import { DeskSettings } from './DeskSettings'
 import { ImportButton } from './ImportButton'
 import { SectionStack, SettingsCard } from '@/pages/settings/sections/ui'
@@ -28,6 +29,9 @@ type Draft = {
   workers: EnterpriseWorkers
   autonomy: EnterpriseAutonomy
   trust: boolean
+  topDecides: boolean
+  sharedKeys: string[]
+  reviewBy: string
   timeout: string
   limits: Record<keyof Settings['limits'], string>
   digest: Settings['digest'] & { hourText: string }
@@ -66,6 +70,9 @@ function draftOf(e: Enterprise): Draft {
     workers: s.workers,
     autonomy: s.autonomy,
     trust: s.trust_chain,
+    topDecides: !!s.top_decides,
+    sharedKeys: s.shared_keys || [],
+    reviewBy: s.review_by || '',
     timeout: String(s.escalation_timeout_h),
     limits: { depth: String(s.limits.depth), reports: String(s.limits.reports), workers_live: String(s.limits.workers_live), hops_per_task: String(s.limits.hops_per_task) },
     digest: { ...s.digest, hourText: String(s.digest.hour) },
@@ -95,6 +102,9 @@ function patchOf(e: Enterprise, d: Draft) {
     workers: d.workers,
     autonomy: d.autonomy,
     trust_chain: d.trust,
+    top_decides: d.top === OWNER ? false : d.topDecides,
+    shared_keys: d.sharedKeys,
+    review_by: d.reviewBy,
     escalation_timeout_h: int(d.timeout, 1, 72, e.settings.escalation_timeout_h),
     limits: {
       depth: int(d.limits.depth, 1, 6, e.settings.limits.depth),
@@ -204,6 +214,31 @@ export function EnterpriseSettings({ enterprise: e }: { enterprise: Enterprise }
             <SettingRow label={t('ent.settings.trust')} description={t('ent.settings.trustDesc')} htmlFor="ent-trust">
               <Switch id="ent-trust" checked={d.trust} onCheckedChange={(v) => set('trust', v)} />
             </SettingRow>
+            <SettingRow label={t('ent.settings.topDecides')} description={d.top === OWNER ? t('ent.settings.topDecidesNoTop') : t('ent.settings.topDecidesDesc')} htmlFor="ent-top-decides">
+              <Switch id="ent-top-decides" checked={d.topDecides && d.top !== OWNER} disabled={d.top === OWNER} onCheckedChange={(v) => set('topDecides', v)} data-testid="top-decides" />
+            </SettingRow>
+            {d.topDecides && d.top !== OWNER && (
+              <div className="py-4">
+                <Callout tone="info" title={t('ent.settings.topDecidesKeeps')}>
+                  <ul className="grid list-disc gap-0.5 pl-4" data-testid="top-decides-keeps">
+                    <li>{t('ent.settings.keeps.outside')}</li>
+                    <li>{t('ent.settings.keeps.hire')}</li>
+                    <li>{t('ent.settings.keeps.access')}</li>
+                    <li>{t('ent.settings.keeps.profile')}</li>
+                    <li>{t('ent.settings.keeps.desk')}</li>
+                  </ul>
+                  <p className="mt-2">{t('ent.settings.topDecidesGrants')}</p>
+                </Callout>
+              </div>
+            )}
+            <SettingRow label={t('ent.settings.review')} description={t('ent.settings.reviewDesc')}>
+              <Select
+                value={d.reviewBy || INHERIT}
+                onValueChange={(v) => set('reviewBy', v === INHERIT ? '' : v)}
+                options={[{ value: INHERIT, label: t('ent.settings.reviewNone') }, ...e.positions.map((p) => ({ value: p.id, label: p.title }))]}
+                className="w-56 max-w-full"
+              />
+            </SettingRow>
             <SettingRow label={t('ent.settings.timeout')} description={t('ent.settings.timeoutDesc')} htmlFor="ent-timeout">
               <Input id="ent-timeout" inputMode="numeric" value={d.timeout} onChange={(ev) => set('timeout', ev.target.value)} className="w-24" />
             </SettingRow>
@@ -249,6 +284,7 @@ export function EnterpriseSettings({ enterprise: e }: { enterprise: Enterprise }
 
         <SettingsCard title={t('ent.settings.envelope')} description={t('ent.settings.envelopeDesc')}>
           <div className="grid gap-4">
+            <BudgetNotes enterprise={e} />
             <FormField label={t('ent.settings.usd')} hint={t('ent.settings.usdHint')}>
               <Input inputMode="decimal" value={d.usd} onChange={(ev) => set('usd', ev.target.value)} className="w-40" placeholder={t('ent.settings.noLimit')} />
             </FormField>
@@ -258,6 +294,7 @@ export function EnterpriseSettings({ enterprise: e }: { enterprise: Enterprise }
             <FormField label={t('ent.settings.domains')} hint={t('ent.settings.domainsHint')}>
               <Input value={d.domains} onChange={(ev) => set('domains', ev.target.value)} placeholder="*.example.com" autoComplete="off" />
             </FormField>
+            <SharedKeys value={d.sharedKeys} onChange={(v) => set('sharedKeys', v)} />
           </div>
         </SettingsCard>
 
@@ -387,5 +424,72 @@ function ProjectsCard({ enterprise: e }: { enterprise: Enterprise }) {
         ))}
       </div>
     </SettingsCard>
+  )
+}
+
+/** The vault keys every occupant gets at run time. The envelope's key list still narrows them: it is never widened. */
+function SharedKeys({ value, onChange }: { value: string[]; onChange: (v: string[]) => void }) {
+  const t = useT()
+  const { data } = useSecrets()
+  const names = [...new Set([...(data || []).map((k) => k.name), ...value])]
+  return (
+    <fieldset className="grid gap-1" data-testid="shared-keys">
+      <legend className="text-sm font-medium">{t('ent.settings.sharedKeys')}</legend>
+      <p className="mb-1 text-[13px] text-muted-foreground">{t('ent.settings.sharedKeysHint')}</p>
+      {names.length === 0 && <p className="text-[13px] text-muted-foreground">{t('ent.settings.sharedKeysNone')}</p>}
+      <div className="grid max-h-48 gap-1 overflow-y-auto">
+        {names.map((name) => (
+          <label key={name} className="flex min-h-9 items-center gap-2.5 rounded-md px-2 text-sm hover:bg-accent">
+            <Checkbox checked={value.includes(name)} onCheckedChange={(v) => onChange(v ? [...value, name] : value.filter((x) => x !== name))} />
+            <span className="font-mono text-[13px]">
+              <Sensitive length={10}>{name}</Sensitive>
+            </span>
+          </label>
+        ))}
+      </div>
+    </fieldset>
+  )
+}
+
+/** Budgets that add up to more than their ceiling (with "Split the ceiling" for a department), and what the amounts mean on a subscription. */
+function BudgetNotes({ enterprise: e }: { enterprise: Enterprise }) {
+  const t = useT()
+  const split = useSplitBudget()
+  const { data: usage } = useUsage()
+  const subscription = !!usage && usage.reason !== 'api_key' && (usage.available || !!usage.plan)
+  const warnings = e.budget_warnings || []
+  return (
+    <>
+      {warnings.length > 0 && (
+        <div className="grid gap-2" data-testid="budget-warnings">
+          {warnings.map((w) => {
+            const name = w.department ? e.departments[w.department]?.name || w.department : t('ent.budget.enterprise')
+            return (
+              <div key={w.department} role="alert" className="flex flex-wrap items-center gap-3 rounded-lg border border-warning/40 bg-warning/10 p-3 text-[13px]">
+                <TriangleAlert className="size-4 shrink-0 text-warning" />
+                <p className="min-w-0 flex-1 basis-56">{t('ent.budget.warn', { name, sum: fmtCost(w.sum), ceiling: fmtCost(w.ceiling), count: w.agents.length })}</p>
+                {w.department && (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    loading={split.isPending && split.variables?.department === w.department}
+                    disabled={split.isPending}
+                    onClick={() => split.mutate({ id: e.id, department: w.department }, { onSuccess: () => toast.success(t('ent.budget.splitDone')) })}
+                    data-testid="budget-split"
+                  >
+                    {t('ent.budget.split')}
+                  </Button>
+                )}
+              </div>
+            )
+          })}
+        </div>
+      )}
+      {subscription && (
+        <p className="text-[13px] text-muted-foreground" data-testid="budget-subscription">
+          {t('ent.budget.subscription')}
+        </p>
+      )}
+    </>
   )
 }

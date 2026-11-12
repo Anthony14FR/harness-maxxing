@@ -62,11 +62,15 @@ def test_the_tabs_of_an_enterprise_are_one_array():
     assert "ENTERPRISE_TABS" in page and "OrgChart" not in page  # the page knows no tab by name
 
 
-def test_the_chart_is_a_list_on_a_phone_and_drags_with_the_mouse_only():
+def test_the_chart_groups_by_department_shows_projects_and_drags_with_the_mouse_only():
     chart = (WEB / "features" / "enterprises" / "OrgChart.tsx").read_text(encoding="utf-8")
-    assert "useCompact()" in chart and "ListNode" in chart
+    assert "useCompact()" in chart
     assert "pointerType !== 'mouse'" in chart  # no drag on a touch screen: the panel's Change lead does it
-    assert "aria-expanded" in chart
+    assert "aria-expanded" in chart and "chart-department" in chart  # one folding panel per department
+    assert "project-filter" in chart and "OrgList" in chart and "chart-zoom-fit" in chart
+    assert "overflow-x" not in chart  # the panels share the width: no sideways scroll
+    chip = (WEB / "features" / "enterprises" / "parts.tsx").read_text(encoding="utf-8")
+    assert "useProjectColorOf" in chip and "OUTFIT" in chip  # the Office's colour and emoji of a project
 
 
 def test_the_tabs_overview_decisions_reports_profile_follow_the_chart():

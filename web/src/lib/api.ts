@@ -10,6 +10,8 @@ import { useUI } from '@/stores/ui'
 export class ApiError extends Error {
   status: number
   code: string
+  /** the other fields of the error body (`project`, `reasons`...) */
+  data: Record<string, unknown> = {}
   constructor(status: number, code: string, message?: string) {
     super(message || code)
     this.name = 'ApiError'
@@ -103,6 +105,7 @@ export async function request<T>(path: string, opts: RequestOptions = {}): Promi
   if (!res.ok) {
     const d = (data && typeof data === 'object' ? data : {}) as { error?: string; message?: string }
     const err = new ApiError(res.status, d.error || `http_${res.status}`, d.message || (typeof data === 'string' ? data.slice(0, 200) : res.statusText))
+    err.data = d as Record<string, unknown>
     // Only our own sign-in check signs out (`auth_required`): a 401 relayed from elsewhere (an extension's API, a
     // service that refused a token) is an ordinary error, not a reason to leave the page.
     if (res.status === 401 && d.error === 'auth_required' && !opts.noAuthRedirect && unauthorizedHandler) unauthorizedHandler()

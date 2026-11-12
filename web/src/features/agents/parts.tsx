@@ -4,7 +4,7 @@ import { Link, useLocation, useNavigate } from 'react-router'
 import { Bot, Clock, MessagesSquare, Rss, Send, Settings2, Webhook } from 'lucide-react'
 import { useT, type TFn, type TKey } from '@/i18n'
 import { agentRoute, useClaudeStatus, useContinueRun, useDeleteAgent, useFeedSettings, usePatchHook, useRunAgent, useSecrets, useSettings } from '@/lib/queries'
-import type { Agent, AgentLimits, AgentWebhookResult, AgentTrigger, AgentTriggerInput, AgentWebhookKind, Cron, FeedLevel, PermissionMode } from '@/lib/types'
+import type { Agent, AgentEffort, AgentLimits, AgentWebhookResult, AgentTrigger, AgentTriggerInput, AgentWebhookKind, Cron, FeedLevel, PermissionMode } from '@/lib/types'
 import { cn } from '@/lib/utils'
 import { Badge, Button, Checkbox, confirm, CopyButton, toast, EmptyState, FormField, Input, Select, Sensitive, Textarea, Tooltip, useMask, type DotTone } from '@/components/ui'
 import { Callout } from '@/features/common'
@@ -75,6 +75,20 @@ export function ModelSelect({ value, onChange, id, defaultLabel }: { value: stri
     ...(value && !models.some((m) => m.id === value) ? [{ value, label: value }] : []),
   ]
   return <Select id={id} value={value || '__default'} onValueChange={(v) => onChange(v === '__default' ? '' : v)} options={options} />
+}
+
+/** The effort of an agent's runs: empty = the model's default (Claude Code picks the highest level the model supports). */
+export function EffortSelect({ value, onChange, id }: { value: AgentEffort; onChange: (v: AgentEffort) => void; id?: string }) {
+  const t = useT()
+  const levels: AgentEffort[] = ['low', 'medium', 'high', 'xhigh', 'max']
+  return (
+    <Select
+      id={id}
+      value={value || '__default'}
+      onValueChange={(v) => onChange(v === '__default' ? '' : (v as AgentEffort))}
+      options={[{ value: '__default', label: t('agents.effort.default') }, ...levels.map((l) => ({ value: l, label: t(`agents.effort.${l}` as TKey) }))]}
+    />
+  )
 }
 
 export function PermissionSelect({ value, onChange, id }: { value: '' | PermissionMode; onChange: (v: '' | PermissionMode) => void; id?: string }) {
