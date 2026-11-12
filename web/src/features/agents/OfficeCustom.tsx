@@ -18,16 +18,18 @@ import { statusOf } from './parts'
 import type { AgentsLayoutApi, ProjectGroup } from './layout'
 import { maskOfficeData } from './officePresentation'
 import { usePresentation } from '@/components/ui'
+import type { Seat } from './OfficeOrg'
 
 // The raw /api/agents is not offered: it holds trigger prompts and key names, the pushed data is enough.
 const READS = ['/api/agents/layout']
 const ROUTES = ['/agents']
 
 /** What the frame gets in maxxing.data (documented for extension authors in docs/user/13-page-extensions.md). */
-function officeData(groups: ProjectGroup[], colorOf: (p: string) => string, emojis: Map<string, string>, t: ReturnType<typeof useT>, lang: string, here: string) {
+function officeData(groups: ProjectGroup[], colorOf: (p: string) => string, emojis: Map<string, string>, t: ReturnType<typeof useT>, lang: string, here: string, seats: Map<string, Seat> | null) {
   const agent = (a: Agent) => {
     const s = statusOf(a, t, lang)
     const last = a.last_run
+    const seat = seats?.get(a.path)
     return {
       path: a.path,
       project: a.project,
@@ -48,6 +50,9 @@ function officeData(groups: ProjectGroup[], colorOf: (p: string) => string, emoj
       avatar_svg: avatarSvg(normalize(a.avatar), !a.enabled),
       route: agentRoute(a),
       chat_route: `${here}?chat=${encodeURIComponent(a.path)}`,
+      enterprise: seat?.enterprise.id ?? null,
+      position: seat?.position.id ?? null,
+      reports_to: seat?.position.reports_to ?? null,
     }
   }
   return {
@@ -62,7 +67,7 @@ function officeData(groups: ProjectGroup[], colorOf: (p: string) => string, emoj
   }
 }
 
-export function OfficeCustom({ ext, groups, layout }: { ext: { id: string; name: string }; groups: ProjectGroup[]; layout: AgentsLayoutApi }) {
+export function OfficeCustom({ ext, groups, layout, seats }: { ext: { id: string; name: string }; groups: ProjectGroup[]; layout: AgentsLayoutApi; seats: Map<string, Seat> | null }) {
   const t = useT()
   const lang = useLang()
   const { data: ws } = useWorkspace()
@@ -70,7 +75,7 @@ export function OfficeCustom({ ext, groups, layout }: { ext: { id: string; name:
   // Pushed again only when what it says changed (the groups are rebuilt at every render of the Office).
   const here = useLocation().pathname                  // /agents or /agents/office: the Office stays, its panel opens
   const presentation = usePresentation()
-  const json = JSON.stringify(maskOfficeData(officeData(groups, layout.colorOf, emojis, t, lang, here), presentation))
+  const json = JSON.stringify(maskOfficeData(officeData(groups, layout.colorOf, emojis, t, lang, here, seats), presentation))
   const data = React.useMemo(() => JSON.parse(json) as unknown, [json])
   const host = React.useMemo<FrameHost>(() => ({ reads: READS, routes: ROUTES, data }), [data])
   const base = `/ext/${encodeURIComponent(ext.id)}`
