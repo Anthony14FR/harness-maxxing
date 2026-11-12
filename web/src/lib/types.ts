@@ -127,6 +127,8 @@ export type Agent = {
   avatar: AgentAvatar
   enabled: boolean
   model: string
+  /** effort of its runs ('' = the model's default) */
+  effort?: AgentEffort
   permission_mode: '' | PermissionMode
   allowed_tools: string[]
   disallowed_tools: string[]
@@ -302,6 +304,7 @@ export type AgentInput = {
   avatar?: Partial<AgentAvatar>
   enabled?: boolean
   model?: string
+  effort?: AgentEffort
   permission_mode?: '' | PermissionMode
   allowed_tools?: string[]
   disallowed_tools?: string[]
@@ -485,6 +488,7 @@ export type SessionStreamEvents = { events: SessionEvent[]; next: number }
 export type BusTopic = 'agents' | 'agents_layout' | 'agent-groups' | 'sessions' | 'workspace' | 'tasks' | 'crons' | 'telegram' | 'backup' | 'health' | 'extensions' | 'trash' | 'feed' | 'profile' | 'register' | 'license' | 'infra' | 'mcp' | 'team' | 'team_live' | 'approvals' | 'open_sessions' | 'enterprises'
 
 /* ---------------------------------------------------------------- Enterprises (Settings -> Features -> enterprises_page) */
+export type AgentEffort = '' | 'low' | 'medium' | 'high' | 'xhigh' | 'max'
 export type PositionState = 'working' | 'waiting' | 'unread' | 'failed' | 'off' | 'vacant' | 'blocked' | 'idle'
 export type EnterpriseCommunication = 'strict' | 'leads' | 'open'
 export type EnterpriseWorkers = 'discreet' | 'visible' | 'off'
@@ -495,6 +499,12 @@ export type EnterpriseSettings = {
   workers: EnterpriseWorkers
   autonomy: EnterpriseAutonomy
   trust_chain: boolean
+  /** the top position decides instead of the owner (requests outside, hire, keys/domains/sandbox/folders, profile terms and the live desk stay with the owner) */
+  top_decides?: boolean
+  /** vault key names every occupant gets at run time (still inside the department and enterprise key envelopes) */
+  shared_keys?: string[]
+  /** position id of the reviewer: a contributor's done goes to it first */
+  review_by?: string
   escalation_timeout_h: number
   digest: { enabled: boolean; hour: number; per_lead: boolean; titles_only: boolean }
   weekly: boolean
@@ -519,6 +529,11 @@ export type Position = {
   worker_template?: { role: string; model: string; usd_per_day: number }
   /** an agent template id that fits the role (the Hire dialog preselects it) */
   suggested_template?: string
+  /** the position runs code from outside: its occupant must be protected and hold no key */
+  untrusted_code?: boolean
+  /** length of the whole note before the cap, and whether it was cut */
+  note_chars?: number
+  note_cut?: boolean
   state: PositionState
   occupant: PositionOccupant | null
   cost_today: number
@@ -544,11 +559,18 @@ export type Enterprise = {
   positions: Position[]
   cost_today: number
   ceiling_hit: boolean
+  /** the server can run protected agents (needed by positions that run outside code) */
+  sandbox_available?: boolean
+  /** the members' daily budgets add up to more than the department's (department '' = the enterprise's) ceiling */
+  budget_warnings?: EnterpriseBudgetWarning[]
 }
+export type EnterpriseBudgetWarning = { department: string; sum: number; ceiling: number; agents: string[] }
 export type EnterpriseInput = { id: string; name: string; emoji?: string; projects?: string[]; template?: string }
 export type EnterprisePatch = Partial<Pick<Enterprise, 'name' | 'emoji' | 'top' | 'settings' | 'envelope' | 'departments' | 'objectives' | 'grants'>>
 export type PositionInput = { id: string; title: string; reports_to?: string | null; department?: string; agent?: string | null; job?: string }
-export type PositionPatch = { rev?: number; title?: string; reports_to?: string | null; department?: string; agent?: string | null; job?: string; worker_template?: Position['worker_template'] | null; desk?: boolean }
+export type PositionPatch = { rev?: number; title?: string; reports_to?: string | null; department?: string; agent?: string | null; job?: string; worker_template?: Position['worker_template'] | null; desk?: boolean; untrusted_code?: boolean; /** seat an agent of a project that is not linked: link it first */ link_project?: boolean }
+export type HireBody = { topic: string; template?: string; name?: string; role?: string; model?: string; effort?: AgentEffort }
+export type EnterpriseMeeting = { id: string; topic: string; organizer: string; participants: string[]; status: 'open' | 'closed'; replies: { position: string; text: string; at: number }[]; minutes: string; at: number; deadline: number }
 export type EnterpriseTemplate = { id: string; name: string; description: string; positions: { id: string; title: string; reports_to: string | null; department: string }[] }
 export type InboxItem = { id: string; kind: string; from: string; text: string; task: string; at: number; outside: boolean }
 export type DecisionItem = { at: number; kind: string; by: string; position: string; text: string; task: string; session: string }

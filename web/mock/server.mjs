@@ -73,9 +73,9 @@ function rng(seed) { // mulberry32, deterministic fake data
 }
 
 class HttpError extends Error {
-  constructor(status, error, message) { super(message || error); this.status = status; this.error = error }
+  constructor(status, error, message, extra) { super(message || error); this.status = status; this.error = error; this.extra = extra || {} }
 }
-const fail = (status, error, message) => { throw new HttpError(status, error, message || error.replace(/_/g, ' ')) }
+const fail = (status, error, message, extra) => { throw new HttpError(status, error, message || error.replace(/_/g, ' '), extra) }
 const RAW = Symbol('raw') // handler wrote the response itself
 
 const MIME = {
@@ -98,11 +98,13 @@ const MODELS = [
 ]
 
 const WORKSPACE = [
-  { name: 'acme', description: 'Acme Inc. — company website, blog and SEO', topics: [
+  { name: 'acme', emoji: '🌱', description: 'Acme Inc. — company website, blog and SEO', topics: [
     ['blog', 'Weekly articles for the Acme blog'], ['website', 'Marketing site (Astro + Tailwind)'], ['seo', 'Keywords, audits and monthly reports']] },
   { name: 'personal', description: 'Personal notes and finances', topics: [
     ['notes', 'Ideas, reading notes and journal'], ['finance', 'Budget and expense tracking']] },
-  { name: 'ops', description: 'Server and infrastructure', topics: [['server', 'VPS maintenance, Caddy, backups']] },
+  { name: 'ops', emoji: '🛠️', description: 'Server and infrastructure', topics: [['server', 'VPS maintenance, Caddy, backups']] },
+  { name: 'shop', emoji: '🛒', description: 'Online shop', topics: [['catalog', 'Products and prices'], ['orders', 'Orders and customer care']] },
+  { name: 'docs', emoji: '📚', description: 'Documentation site', topics: [['guides', 'User guides']] },
 ]
 const projPath = (p) => `projects/${p}`
 const topicPath = (p, t) => `projects/${p}/topics/${t}`
@@ -172,7 +174,7 @@ function buildState(scenario) {
 
   if (scenario !== 'setup' && scenario !== 'onboarding') {
     // full workspace
-    st.projects = WORKSPACE.map((p) => ({ name: p.name, description: p.description, topics: p.topics.map(([name, description]) => ({ name, description })) }))
+    st.projects = WORKSPACE.map((p) => ({ name: p.name, emoji: p.emoji || '', description: p.description, topics: p.topics.map(([name, description]) => ({ name, description })) }))
   }
   if (ready) {
     seedSessions(st, t)
@@ -642,7 +644,7 @@ function topicObj(p, tp) {
 }
 function projectObj(p) {
   const pp = projPath(p.name)
-  return { name: p.name, path: pp, description: p.description || '', topics: p.topics.map((tp) => topicObj(p, tp)),
+  return { name: p.name, path: pp, emoji: p.emoji || '', description: p.description || '', topics: p.topics.map((tp) => topicObj(p, tp)),
     session_count: S.sessions.filter((s) => (s.path === pp || s.path.startsWith(pp + '/')) && !s.archived).length }
 }
 const findProject = (name) => S.projects.find((p) => p.name === name) || fail(404, 'not_found', `Project “${name}” not found`)
@@ -1979,6 +1981,13 @@ R('GET', '/api/usage', () => ({ available: true, plan: 'Max', source: 'api', see
   five_hour: { pct: +meters().five.toFixed(1), resets_at: now() + 2 * HOUR }, seven_day: { pct: +meters().week.toFixed(1), resets_at: now() + 3 * DAY } }))
 // MOCK_FEATURES=all: three agents in acme (two in blog, one in seo) for the Office and the rail's agent preview card;
 // the writer "works" in the running blog session.
+// A larger org for the chart: 16 positions on 5 projects (three of them are plain "Dev").
+const BIG_AGENTS = [
+  ['acme', 'website', 'director', 'Ada', 'violet'], ['acme', 'website', 'product-lead', 'Ben', 'blue'], ['acme', 'website', 'dev-web', 'Cleo', 'green'],
+  ['shop', 'catalog', 'dev-shop', 'Dan', 'amber'], ['docs', 'guides', 'dev-docs', 'Eve', 'rose'], ['acme', 'website', 'qa', 'Finn', 'clay'],
+  ['shop', 'orders', 'shop-lead', 'Gus', 'amber'], ['shop', 'orders', 'care', 'Hana', 'rose'], ['ops', 'server', 'infra-lead', 'Ivo', 'blue'],
+  ['ops', 'server', 'sre', 'Jade', 'green'], ['docs', 'guides', 'docs-writer', 'Kim', 'violet'],
+]
 function mockAgents() {
   if (!MOCK_ALL) return []
   const t = now()
@@ -1988,7 +1997,10 @@ function mockAgents() {
     allowed_tools: [], disallowed_tools: [], telegram: false, silent: false, approvals: false, trust_outside: false, keys: [], sandbox: true, domains: [], writable: [],
     rules: [], subagent: false, limits: { usd_per_day: 2, runs_per_hour: 6, timeout_s: 1800, debounce_s: 60 }, triggers: [], created: t - 9 * DAY, session_count: 12,
     archived_count: 0, running: 0, unread: 0, cost_today: 0.42, runs_last_hour: 0, last_run: null, running_now: 0, running_sessions: [], thread_unread: 0, waiting: 0, alerts: 0, ...extra })
+  const more = (project, topic, name, display, desc, color, extra = {}) =>
+    base(topic, name, display, desc, { color, skin: 'light', hair: 'short', hair_color: 'brown', face: 'smile', accessory: 'none' }, { path: `${topicPath(project, topic)}/agents/${name}`, project, cost_today: 0.2, ...extra })
   return [
+    ...BIG_AGENTS.map(([project, topic, name, display, color]) => more(project, topic, name, display, `${display} of ${project}.`, color)),
     base('blog', 'writer', 'Blog Writer', 'Drafts the weekly article from the editorial calendar.', { color: 'clay', skin: 'light', hair: 'short', hair_color: 'black', face: 'focused', accessory: 'none' },
       run ? { running: 1, running_now: 1, running_sessions: [{ id: run.id, title: run.title, started: t - 2 * MIN }], last_run: { id: 'm1', at: t - 2 * DAY, kind: 'result', text: 'Published "Cart abandonment in 2026".', ok: true } } : {}),
     base('blog', 'proofreader', 'Proofreader', 'Reads every draft for typos and tone.', { color: 'green', skin: 'tan', hair: 'long', hair_color: 'brown', face: 'happy', accessory: 'glasses' },
@@ -2004,10 +2016,38 @@ const ENT_TEMPLATES = [
   { id: 'content', name: 'Content team', description: 'A head of content with a writer and a reviewer.', positions: [{ id: 'head', title: 'Head of content', reports_to: null, department: 'content' }, { id: 'writer', title: 'Writer', reports_to: 'head', department: 'content' }, { id: 'reviewer', title: 'Reviewer', reports_to: 'head', department: 'content' }] },
   { id: 'support', name: 'Customer care', description: 'A support lead and two agents.', positions: [{ id: 'lead', title: 'Support lead', reports_to: null, department: 'support' }, { id: 'agent-a', title: 'First line', reports_to: 'lead', department: 'support' }, { id: 'agent-b', title: 'Second line', reports_to: 'lead', department: 'support' }] },
 ]
-const ENT_SETTINGS = () => ({ communication: 'leads', allow: [], workers: 'discreet', autonomy: 'balanced', trust_chain: false, escalation_timeout_h: 4,
+const ENT_SETTINGS = () => ({ communication: 'leads', allow: [], workers: 'discreet', autonomy: 'balanced', trust_chain: false, top_decides: false, shared_keys: [], review_by: '', escalation_timeout_h: 4,
   digest: { enabled: true, hour: 8, per_lead: false, titles_only: false }, weekly: false, monthly: false, desk: { enabled: false, label: '', retention_days: 30, full_for: [], public: { enabled: false, token: '', rate_per_hour: 20, max_chars: 1000 } },
   limits: { depth: 4, reports: 8, workers_live: 5, hops_per_task: 6 } })
+function bigSeed() {
+  const a = (project, topic, name) => `${topicPath(project, topic)}/agents/${name}`
+  const pos = (id, title, reports_to, department, agent, job = '') => ({ id, title, reports_to, department, agent, job })
+  const dept = (name, usd) => ({ name, envelope: { usd_per_day: usd }, settings: {}, notes: '' })
+  ENT.set('northwind', { version: 1, rev: 1, name: 'Northwind', emoji: '🧭', projects: ['acme', 'shop', 'docs', 'ops'], top: 'director', settings: ENT_SETTINGS(),
+    envelope: { usd_per_day: 20, keys: null, domains: null },
+    departments: { management: dept('Management', null), product: dept('Product', 3), marketing: dept('Marketing', 2), commerce: dept('Commerce', 4), engineering: dept('Engineering', 6) },
+    objectives: [], grants: [],
+    positions: [
+      pos('director', 'Director of operations', null, 'management', a('acme', 'website', 'director'), 'Runs the company day to day.'),
+      pos('product-lead', 'Head of product', 'director', 'product', a('acme', 'website', 'product-lead'), 'Decides what gets built next.'),
+      pos('dev-web', 'Dev', 'product-lead', 'product', a('acme', 'website', 'dev-web'), 'Builds the marketing site.'),
+      pos('dev-shop', 'Dev', 'product-lead', 'product', a('shop', 'catalog', 'dev-shop'), 'Builds the shop.'),
+      pos('dev-docs', 'Dev', 'product-lead', 'product', a('docs', 'guides', 'dev-docs'), 'Builds the documentation site.'),
+      pos('qa', 'Quality assurance and release checks', 'product-lead', 'product', a('acme', 'website', 'qa'), 'Checks every release.'),
+      pos('marketing-lead', 'Head of marketing', 'director', 'marketing', a('acme', 'blog', 'writer'), 'Owns traffic and brand reach.'),
+      pos('writer', 'Articles and newsletters', 'marketing-lead', 'marketing', a('acme', 'blog', 'proofreader'), 'Writes the weekly article.'),
+      pos('seo', 'Search and rankings', 'marketing-lead', 'marketing', a('acme', 'seo', 'rank-watch'), ''),
+      pos('shop-lead', 'Head of the shop', 'director', 'commerce', a('shop', 'orders', 'shop-lead'), 'Owns sales and fulfilment.'),
+      pos('care', 'Customer care', 'shop-lead', 'commerce', a('shop', 'orders', 'care'), 'Answers customers within a day.'),
+      pos('catalog', 'Catalog manager', 'shop-lead', 'commerce', null, 'Keeps products and prices up to date.'),
+      pos('infra-lead', 'Infrastructure lead', 'director', 'engineering', a('ops', 'server', 'infra-lead'), 'Keeps the servers up.'),
+      pos('sre', 'Site reliability engineer', 'infra-lead', 'engineering', a('ops', 'server', 'sre'), 'Watches alerts and backups.'),
+      pos('docs-writer', 'Technical writer', 'infra-lead', 'engineering', a('docs', 'guides', 'docs-writer'), 'Writes the guides.'),
+      pos('reviewer', 'Reviewer', 'director', 'engineering', null, 'Reviews finished work.'),
+    ] })
+}
 function entSeed() {
+  bigSeed()
   const ag = (topic, name) => `${topicPath('acme', topic)}/agents/${name}`
   ENT.set('acme-group', { version: 1, rev: 3, name: 'Acme Group', emoji: '🏢', projects: ['acme'], top: 'owner', settings: ENT_SETTINGS(),
     envelope: { usd_per_day: 10, keys: null, domains: null },
@@ -2021,7 +2061,7 @@ function entSeed() {
     ] })
   const t = now()
   S.tasks.tasks.push({ id: 't_9f3c2a', title: 'Three articles on the spring kit', notes: '', status: 'doing', priority: 1, due: new Date(Date.now() + 3 * DAY * 1000).toISOString().slice(0, 10), project_id: null, topic_path: null, labels: ['acme-group'], created: t, updated: t, done_at: null,
-    order: 9000, enterprise: { id: 'acme-group', owner: 'writer', requester: 'marketing-lead', parent: '', deliverable: 'Three articles', stage: '', hops: 1, outside: false } })
+    order: 9000, enterprise: { id: 'acme-group', owner: 'writer', requester: 'marketing-lead', parent: '', deliverable: 'Three articles', stage: 'review_pending', hops: 1, outside: false } })
 }
 const entAgent = (path) => path ? mockAgents().find((a) => a.path === path) || null : null
 function entView(id) {
@@ -2030,10 +2070,17 @@ function entView(id) {
     const a = entAgent(p.agent)
     const state = !p.agent || !a ? 'vacant' : !a.enabled ? 'off' : a.waiting ? 'waiting' : a.running_now ? 'working' : a.thread_unread ? 'unread' : 'idle'
     return { ...p, desk: !!p.desk, state, occupant: a ? { path: a.path, display_name: a.display_name, avatar: a.avatar, enabled: a.enabled, sandbox: a.sandbox } : null,
-      cost_today: a ? a.cost_today : 0, inbox: p.id === 'writer' ? 2 : 0, open_tasks: a ? 1 : 0, blocked_reason: '' }
+      cost_today: a ? a.cost_today : 0, inbox: p.id === 'writer' ? 2 : 0, open_tasks: a ? 1 : 0, blocked_reason: '',
+      untrusted_code: !!p.untrusted_code, note_chars: 600 + (p.job || '').length * 3 + (p.id === 'director' ? 2600 : 0), note_cut: p.id === 'director' }
   })
+  const warn = (dept, ceiling) => {
+    const agents = positions.filter((p) => (dept === '' || p.department === dept) && p.occupant).map((p) => p.occupant.path)
+    const sum = agents.length * 2
+    return ceiling != null && sum > ceiling ? [{ department: dept, sum, ceiling, agents }] : []
+  }
+  const budget_warnings = [...Object.entries(e.departments).flatMap(([d, x]) => warn(d, x.envelope?.usd_per_day ?? null)), ...warn('', e.envelope.usd_per_day ?? null)]
   return { id, name: e.name, emoji: e.emoji, rev: e.rev, projects: e.projects, top: e.top, settings: e.settings, envelope: e.envelope, departments: e.departments,
-    objectives: e.objectives, grants: e.grants, broken: false, positions, cost_today: +positions.reduce((n, p) => n + p.cost_today, 0).toFixed(2), ceiling_hit: false }
+    objectives: e.objectives, grants: e.grants, broken: false, sandbox_available: true, budget_warnings, positions, cost_today: +positions.reduce((n, p) => n + p.cost_today, 0).toFixed(2), ceiling_hit: false }
 }
 const entMerge = (a, b) => (b && typeof b === 'object' && !Array.isArray(b) ? Object.fromEntries([...new Set([...Object.keys(a || {}), ...Object.keys(b)])].map((k) => [k, k in b ? entMerge((a || {})[k], b[k]) : a[k]])) : b)
 const entTouch = (e, id) => { e.rev += 1; bus('enterprises', `enterprises:${id}`) }
@@ -2094,7 +2141,16 @@ R('PATCH', '/api/enterprises/:e/positions/:pos', ({ params, body }) => {
   if (structural && body.rev !== e.rev) fail(409, 'stale', 'The chart changed: reloaded')
   if (body.reports_to && entUnder(e, p.id).includes(body.reports_to)) fail(400, 'cycle', 'A position cannot report to its own team')
   if (body.agent && e.positions.some((x) => x.agent === body.agent && x.id !== p.id)) fail(409, 'agent_seated', 'This agent holds another position')
-  for (const k of ['title', 'reports_to', 'department', 'agent', 'job', 'worker_template', 'desk']) if (body[k] !== undefined) p[k] = body[k]
+  const project = /^projects\/([^/]+)\//.exec(body.agent || '')?.[1]
+  if (project && !e.projects.includes(project)) {
+    if (!body.link_project) fail(409, 'project_not_linked', `The project ${project} is not linked to this enterprise`, { project })
+    e.projects.push(project)
+  }
+  if (body.untrusted_code ?? p.untrusted_code) {
+    const a = entAgent(body.agent ?? p.agent)
+    if (body.agent && a && !a.sandbox) fail(400, 'untrusted_unfit', 'This agent does not fit a position that runs outside code', { reasons: ['not_sandboxed'] })
+  }
+  for (const k of ['title', 'reports_to', 'department', 'agent', 'job', 'worker_template', 'desk', 'untrusted_code']) if (body[k] !== undefined) p[k] = body[k]
   entTouch(e, params.e)
   return entView(params.e)
 })
@@ -2113,9 +2169,30 @@ R('POST', '/api/enterprises/:e/positions/:pos/hire', ({ params, body }) => {
   const p = entPos(e, params.pos)
   const path = `${body.topic}/agents/${p.id}`
   if (body.template) p.hired_with = body.template
+  p.hired = { name: body.name || '', role: body.role || '', model: body.model || '', effort: body.effort || '' }
   p.agent = path
   entTouch(e, params.e)
   return { agent: path }
+})
+R('POST', '/api/enterprises/:e/departments/:d/split-budget', ({ params }) => {
+  const e = entGet(params.e)
+  const members = entView(params.e).positions.filter((p) => p.department === params.d && p.occupant)
+  const ceiling = e.departments[params.d]?.envelope?.usd_per_day
+  if (!members.length || ceiling == null) fail(400, 'no_ceiling', 'This department has no ceiling or no member')
+  const each = Math.floor((ceiling / members.length) / 0.05) * 0.05
+  entTouch(e, params.e)
+  e.split ||= {}
+  e.split[params.d] = each
+  return { agents: members.map((p) => ({ path: p.occupant.path, usd_per_day: +each.toFixed(2) })), enterprise: entView(params.e) }
+})
+R('GET', '/api/enterprises/:e/meetings', ({ params }) => {
+  const e = entGet(params.e)
+  const first = e.positions[1]?.id || 'writer'
+  const second = e.positions[2]?.id || 'seo'
+  return { items: [
+    { id: 'm2', topic: 'Spring launch: who does what', organizer: e.positions[0]?.id || 'owner', participants: [first, second], status: 'open', replies: [{ position: first, text: 'I can ship the landing page on Thursday.', at: now() - 900 }], minutes: '', at: now() - 3600, deadline: now() + 3 * 3600 },
+    { id: 'm1', topic: 'Weekly sync', organizer: 'owner', participants: [first, second], status: 'closed', replies: [{ position: first, text: 'Nothing blocked.', at: now() - 90000 }, { position: second, text: 'Waiting on the new keywords.', at: now() - 89000 }], minutes: 'Nothing is blocked. Keywords are expected tomorrow.', at: now() - 91000, deadline: now() - 80000 },
+  ] }
 })
 R('GET', '/api/enterprises/:e/positions/:pos/inbox', ({ params }) => ({ items: params.pos === 'writer' ? [{ id: 'i1', kind: 'assignment', from: 'marketing-lead', text: 'Three articles on the spring kit', task: 't_9f3c2a', at: now() - 3600, outside: false }] : [] }))
 const entState = (e) => (e.live ||= {
@@ -2524,7 +2601,7 @@ const server = http.createServer(async (req, res) => {
     if (req.method !== 'GET' && req.method !== 'HEAD') return sendJson(res, 405, { error: 'method_not_allowed', message: 'Static files are read-only' })
     return serveStatic(req, res, url)
   } catch (e) {
-    if (e instanceof HttpError) return sendJson(res, e.status, { error: e.error, message: e.message })
+    if (e instanceof HttpError) return sendJson(res, e.status, { ...e.extra, error: e.error, message: e.message })
     console.error(e)
     return sendJson(res, 500, { error: 'internal', message: String(e && e.message || e) })
   }

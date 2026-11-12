@@ -1,6 +1,6 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { api, seg } from '../api'
-import type { DecisionItem, Enterprise, EnterpriseAbout, EnterpriseBuilt, EnterpriseEscalation, EnterpriseInput, DeskMessage, DeskSettingsPatch, DeskSuggestion, EnterpriseDesk, EnterpriseInsights, EnterpriseOverview, EnterpriseWorker, EnterprisePatch, EnterpriseProfile, EnterpriseReport, EnterpriseReportDoc, EnterpriseRequest, EnterpriseSummary, EnterpriseTemplate, InboxItem, Ok, PositionInput, PositionPatch } from '../types'
+import type { DecisionItem, Enterprise, EnterpriseAbout, EnterpriseBuilt, EnterpriseEscalation, EnterpriseInput, EnterpriseMeeting, HireBody, DeskMessage, DeskSettingsPatch, DeskSuggestion, EnterpriseDesk, EnterpriseInsights, EnterpriseOverview, EnterpriseWorker, EnterprisePatch, EnterpriseProfile, EnterpriseReport, EnterpriseReportDoc, EnterpriseRequest, EnterpriseSummary, EnterpriseTemplate, InboxItem, Ok, PositionInput, PositionPatch } from '../types'
 import { qk } from './keys'
 import { useMut } from './util'
 
@@ -25,6 +25,7 @@ export const entKeys = {
   conversation: (id: string, conv: string) => ['enterprises', 'desk', id, conv] as const,
   suggestions: (id: string) => ['enterprises', 'suggestions', id] as const,
   workers: (id: string) => ['enterprises', 'workers', id] as const,
+  meetings: (id: string) => ['enterprises', 'meetings', id] as const,
 }
 
 const base = (id: string, sub = '') => `/api/enterprises/${seg(id)}${sub}`
@@ -105,12 +106,23 @@ export function usePatchPosition() {
 export function useDeletePosition() {
   return useMut(({ id, pos, reparent_to }: { id: string; pos: string; reparent_to?: string }) => api.del<Ok>(`${posUrl(id, pos)}${reparent_to ? `?reparent_to=${encodeURIComponent(reparent_to)}` : ''}`), { invalidate: [entKeys.all], errorToast: false })
 }
-/** Creates the agent in `topic` (a topic path, projects/<p>/topics/<t>) and seats it; the agent sets itself up in its conversation. */
+/** Creates the agent in `topic` (a topic path, projects/<p>/topics/<t>) and seats it; the agent sets itself up in its conversation.
+ *  `name`, `role` (its CLAUDE.md), `model` and `effort` are optional: without them the server builds the role from the position. */
 export function useHirePosition() {
-  return useMut(({ id, pos, topic, template }: { id: string; pos: string; topic: string; template?: string }) => api.post<{ agent: string }>(posUrl(id, pos, '/hire'), { topic, template }), {
+  return useMut(({ id, pos, ...b }: HireBody & { id: string; pos: string }) => api.post<{ agent: string }>(posUrl(id, pos, '/hire'), b), {
     invalidate: [entKeys.all, ['agents'], qk.workspace],
     errorToast: false,
   })
+}
+/** Sets each member's daily budget of a department (or of the whole enterprise: department "") to its share of the ceiling. */
+export function useSplitBudget() {
+  return useMut(({ id, department }: { id: string; department: string }) => api.post<{ agents: { path: string; usd_per_day: number }[]; enterprise: Enterprise }>(base(id, `/departments/${seg(department)}/split-budget`)), {
+    invalidate: [entKeys.all, ['agents']],
+  })
+}
+/** The meetings of the enterprise, newest first as the server sends them. */
+export function useEnterpriseMeetings(id: string | null) {
+  return useQuery({ queryKey: entKeys.meetings(id || ''), queryFn: () => api.get<{ items: EnterpriseMeeting[] }>(base(id!, '/meetings')).then((r) => r.items), enabled: !!id })
 }
 
 // ---- Overview, reports, requests, escalations, knowledge. The bus topic `enterprises:<slug>` refreshes them all (keys.ts).

@@ -11,14 +11,14 @@ import { AlertTriangle, ChevronRight, Download, Lock, Mail, Pencil, Plus, Trash2
 import { useT } from '@/i18n'
 import { errorMessage, isApiError } from '@/lib/api'
 import { agentExportUrl, usePatchAgent } from '@/lib/queries'
-import type { AgentDetail, AgentLimits, AgentRule, AgentRuleTool, PermissionMode } from '@/lib/types'
+import type { AgentDetail, AgentEffort, AgentLimits, AgentRule, AgentRuleTool, PermissionMode } from '@/lib/types'
 import { cn } from '@/lib/utils'
 import { Button, FormField, Input, Select, Sensitive, Switch, Textarea, toast } from '@/components/ui'
 import { SettingRow } from '@/features/common'
 import { SettingsCard } from '@/pages/settings/sections/ui'
 import { AgentMail } from './AgentMail'
 import { AppearanceDialog } from './Appearance'
-import { KeyChecks, LimitsFields, ModelSelect, PermissionSelect, useDeleteAgentAsk } from './parts'
+import { EffortSelect, KeyChecks, LimitsFields, ModelSelect, PermissionSelect, useDeleteAgentAsk } from './parts'
 
 const toolsText = (l: string[]) => l.join('\n')
 const toolsList = (s: string) =>
@@ -27,10 +27,11 @@ const toolsList = (s: string) =>
     .map((x) => x.trim())
     .filter(Boolean)
 
-type Draft = { model: string; chatModel: string; permission: '' | PermissionMode; allowed: string; disallowed: string; limits: AgentLimits; rules: AgentRule[] }
+type Draft = { model: string; effort: AgentEffort; chatModel: string; permission: '' | PermissionMode; allowed: string; disallowed: string; limits: AgentLimits; rules: AgentRule[] }
 const draftOf = (a: AgentDetail): Draft => ({
   rules: (a.rules || []).map((r) => ({ ...r, reason: r.reason || '' })),
   model: a.model,
+  effort: a.effort || '',
   chatModel: a.chat_model || '',
   permission: a.permission_mode,
   allowed: toolsText(a.allowed_tools),
@@ -152,6 +153,7 @@ export function AgentSettings({ agent: a, section }: { agent: AgentDetail; secti
       {
         path: a.path,
         model: d.model,
+        effort: d.effort,
         chat_model: d.chatModel,
         permission_mode: d.permission,
         allowed_tools: toolsList(d.allowed),
@@ -197,6 +199,9 @@ export function AgentSettings({ agent: a, section }: { agent: AgentDetail; secti
           <div className="grid gap-3 sm:grid-cols-2">
             <FormField label={t('agents.field.model')} hint={t('agents.settings.sec.modelDesc')}>
               <ModelSelect id="ag-model" value={d.model} onChange={(v) => set('model', v)} />
+            </FormField>
+            <FormField label={t('agents.field.effort')} hint={t('agents.settings.sec.effortDesc')}>
+              <EffortSelect id="ag-effort" value={d.effort} onChange={(v) => set('effort', v)} />
             </FormField>
             {/* the model of our conversation, when the agent (or the owner) set one apart: empty = the one above */}
             <FormField label={t('agents.field.chatModel')} hint={t('agents.settings.sec.chatModelDesc')}>
