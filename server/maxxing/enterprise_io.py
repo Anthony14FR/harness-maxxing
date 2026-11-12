@@ -66,7 +66,7 @@ def _reset_choices(d: dict, skipped: list[dict]) -> None:
         elif key in where:
             where[key] = copy.deepcopy(want)
 
-    for key in ("autonomy", "workers", "communication", "allow", "weekly", "monthly", "digest.enabled"):
+    for key in ("autonomy", "workers", "communication", "allow", "weekly", "monthly", "digest.enabled", "top_decides"):
         reset(s, key, "settings")
     for dept, row in (d.get("departments") or {}).items():
         st = row.get("settings") if isinstance(row, dict) else None

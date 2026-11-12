@@ -64,6 +64,31 @@ def _chart_line(slug: str, d: dict, pos: dict) -> str:
             "done, block, escalate, request, profile [--section S], show.")
 
 
+def _parts(slug: str, d: dict, pos: dict, about_text: str | None = None) -> tuple[str, list[tuple[str, str]]]:
+    """(the chart line, the labelled texts) a position's note is made of, before any cap."""
+    line = _chart_line(slug, d, pos)
+    dept = d["departments"].get(pos["department"]) if pos["department"] else None
+    about_text = _read_text(enterprises.folder(slug) / ABOUT_FILE) if about_text is None else about_text
+    return line, [("Enterprise", about_text), (f"Department {dept['name']}" if dept else "", dept["notes"] if dept else ""),
+                  ("Your job", pos["job"])]
+
+
+def note_size(slug: str, pos_id: str, d: dict | None = None, about_text: str | None = None) -> tuple[int, bool]:
+    """(characters of the full note before the NOTE_MAX cap, whether it is cut). Never raises."""
+    try:
+        d = d or enterprises.load(slug)
+        pos = next((p for p in d["positions"] if p["id"] == pos_id), None)
+        if d.get("broken") or not pos:
+            return 0, False
+        line, parts = _parts(slug, d, pos, about_text)
+        blocks = [(f"{label}:\n{t}" if label else t) for label, text in parts if (t := (text or "").strip())]
+        n = len("\n\n".join([*blocks, line]))
+        return n, n > NOTE_MAX
+    except Exception:  # noqa: BLE001
+        logger.exception("note size of %s/%s", slug, pos_id)
+        return 0, False
+
+
 def note(agent_path: str) -> str:
     """The enterprise part of the system note of an agent's turn ("" when it holds no position). Never raises."""
     try:
@@ -77,11 +102,7 @@ def note(agent_path: str) -> str:
         pos = enterprises.position(slug, pid)
         if d.get("broken") or not pos:
             return ""
-        line = _chart_line(slug, d, pos)
-        dept = d["departments"].get(pos["department"]) if pos["department"] else None
-        parts = [("Enterprise", _read_text(enterprises.folder(slug) / ABOUT_FILE)),
-                 (f"Department {dept['name']}" if dept else "", dept["notes"] if dept else ""),
-                 ("Your job", pos["job"])]
+        line, parts = _parts(slug, d, pos)
         room = NOTE_MAX - len(line) - 2
         out: list[str] = []
         for label, text in parts:
