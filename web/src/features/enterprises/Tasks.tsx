@@ -109,7 +109,7 @@ function Row({ x, title, lang }: { x: EnterpriseTask; title: (id: string) => str
       <td className="px-4 py-2.5 text-right">
         {x.run && (
           <Button asChild variant="ghost" size="sm">
-            <Link to={`/sessions?path=${encodeURIComponent(x.run.session)}`}>
+            <Link to={`/sessions?session=${encodeURIComponent(x.run.session)}`}>
               {x.run.running ? <StatusDot tone="running" pulse className="size-1.5" /> : <Play />} {t('ent.tasks.run')}
             </Link>
           </Button>

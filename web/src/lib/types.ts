@@ -574,7 +574,7 @@ export type Enterprise = {
   budget_warnings?: EnterpriseBudgetWarning[]
 }
 export type EnterpriseTask = { id: string; title: string; owner: string; requester: string; status: string; stage: string; created: number; updated: number; last_move: string; hops: number; outside: boolean; run: { session: string; running: boolean } | null }
-export type EnterpriseNow = { position: string; agent: string; state: PositionState; task: string; since: number }
+export type EnterpriseNow = { position: string; agent: string; state: PositionState | 'queued'; task: { id: string; title: string } | string | null; since: number }
 export type EnterpriseBudgetWarning = { department: string; sum: number; ceiling: number; agents: string[] }
 export type EnterpriseInput = { id: string; name: string; emoji?: string; projects?: string[]; template?: string }
 export type EnterprisePatch = Partial<Pick<Enterprise, 'name' | 'emoji' | 'top' | 'settings' | 'envelope' | 'departments' | 'objectives' | 'grants'>>
