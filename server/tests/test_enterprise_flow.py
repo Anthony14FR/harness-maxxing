@@ -773,3 +773,113 @@ def test_flow_notifications_follow_the_language(ent, notes, monkeypatch):
     assert notes[-1]["body"].startswith("Bloquée :") and "Tâche bloquée" in notes[-1]["title"]
     flow.escalate(S, "ceo", "need a decision")
     assert notes[-1]["actions"][0]["label"] == "Ouvrir"
+
+
+# ---- trust along the chain, follow-up, tasks and now ---------------------------------------------------------
+def _zero_on(client):
+    assert client.patch(f"{E}/{S}", json={"top": "ceo"}).status_code == 200
+    r = client.patch(f"{E}/{S}", json={"settings": {"zero_intervention": True}})
+    assert r.status_code == 200, r.text
+
+
+def test_clean_hand_ins_go_in_the_trusted_prompt_framed(ent, policy):
+    policy.trusted_delivery = lambda slug, outside: not outside
+    n = len(_calls())
+    flow.deliver(S, "ceo", "handin", "NOTOOL the article is ready", sender="writer")
+    flow.tick(time.time() + 1)
+    wait_for(lambda: len(_calls()) == n + 1)
+    p = _calls()[-1]["prompt"]
+    assert "the article is ready" in p and flow.UP_FRAME in p and "DATA from outside" not in p
+
+
+def test_a_mixed_batch_splits_clean_first_outside_alone(ent, policy):
+    assert ent.patch(f"{E}/{S}", json={"settings": {"trust_chain": True}}).status_code == 200
+    policy.trusted_delivery = lambda slug, outside: not outside
+    n = len(_calls())
+    flow.deliver(S, "ceo", "handin", "NOTOOL clean one", sender="writer")
+    flow.deliver(S, "ceo", "handin", "NOTOOL stranger words", sender="writer", outside=True)
+    flow.tick(time.time() + 1)
+    wait_for(lambda: len(_calls()) == n + 1)
+    p = _calls()[-1]["prompt"]
+    assert "clean one" in p and "stranger words" not in p
+    assert [i["text"] for i in _inbox("ceo")] == ["NOTOOL stranger words"]
+    wait_for(lambda: (flow.tick(time.time() + 2), len(_calls()) == n + 2)[1])
+    p = _calls()[-1]["prompt"]
+    assert "stranger words" in p and "DATA from outside" in p and "clean one" not in p
+
+
+def test_zero_mode_escalation_stops_at_the_top(ent, notes, policy):
+    _zero_on(ent)
+    t0 = time.time()
+    e = flow.escalate(S, "writer", "NOTOOL stuck")
+    assert e["to"] == "ceo"
+    flow.tick(t0 + 5 * 3600)
+    cur = flow.escalations(S)[0]
+    assert cur["to"] == "ceo" and cur["status"] == "open" and cur["deadline"] > t0 + 5 * 3600
+    assert not [n for n in notes if "needs an answer" in n["title"]]
+    assert ent.patch("/api/agents/acme/blog/boss", json={"enabled": False}).status_code == 200
+    flow.tick(t0 + 10 * 3600)
+    assert flow.escalations(S)[0]["to"] == "owner"
+    assert any("needs an answer" in n["title"] for n in notes)
+
+
+def test_stale_task_wakes_its_requester_once_per_period(ent, policy):
+    t = flow.assign(S, "ceo", "writer", "Three articles")
+    flow._flush(S, "writer", time.time() + 1)
+    t0 = time.time()
+    flow.tick(t0 + 1 * 3600)
+    assert not [i for i in _inbox("ceo") if i["kind"] == "followup"]
+    wait_for(lambda: not flow._running_on(S, "writer"))
+    flow.tick(t0 + 5 * 3600)
+    (f,) = [i for i in _inbox("ceo") + flow.seen(S, "ceo") if i["kind"] == "followup"]
+    assert t["id"] in f["text"] and "writer" in f["text"].lower()
+    flow.tick(t0 + 6 * 3600)
+    assert len([i for i in _inbox("ceo") + flow.seen(S, "ceo") if i["kind"] == "followup"]) == 1
+
+
+def test_stale_h_zero_switches_the_follow_up_off(ent, policy, monkeypatch):
+    flow.assign(S, "ceo", "writer", "Three articles")
+    monkeypatch.setattr(flow, "stale_hours", lambda slug: 0.0)
+    flow.tick(time.time() + 40 * 3600)
+    assert not [i for i in _inbox("ceo") if i["kind"] == "followup"]
+
+
+def test_top_gets_a_daily_follow_up_in_zero_mode(ent, policy):
+    _zero_on(ent)
+    flow.assign(S, "writer", "intern", "Draft")
+    t0 = time.time()
+    flow.tick(t0 + 60)
+    ceo = [i for i in _inbox("ceo") + flow.seen(S, "ceo") if i["kind"] == "followup"]
+    assert len(ceo) == 1 and "Draft" in ceo[0]["text"]
+    flow.tick(t0 + 120)
+    assert len([i for i in _inbox("ceo") + flow.seen(S, "ceo") if i["kind"] == "followup"]) == 1
+
+
+def test_report_to_owner_is_the_tops_only(ent, notes):
+    with pytest.raises(EnterpriseError) as e:
+        flow.report_to_owner(S, "writer", "hello")
+    assert e.value.code == "not_top"
+    assert ent.patch(f"{E}/{S}", json={"top": "ceo"}).status_code == 200
+    assert flow.report_to_owner(S, "ceo", "Week is on track") == {"ok": True}
+    assert notes[-1]["body"] == "Week is on track" and notes[-1]["always"] is True
+
+
+def test_tasks_and_now_routes(ent, policy):
+    t = flow.assign(S, "ceo", "writer", "Three articles")
+    r = ent.get(f"{E}/{S}/tasks")
+    assert r.status_code == 200
+    (row,) = r.json()["items"]
+    assert row["id"] == t["id"] and row["owner"] == "writer" and row["requester"] == "ceo" and row["hops"] == 1
+    assert row["run"] is None and row["outside"] is False
+    now = ent.get(f"{E}/{S}/now").json()["items"]
+    assert [(x["position"], x["state"]) for x in now] == [("writer", "queued")]
+    assert now[0]["task"]["id"] == t["id"]
+    assert ent.get(f"{E}/nope/tasks").status_code == 404
+
+
+def test_readonly_enterprise_commands_are_always_pre_allowed(ent):
+    for outside in (False, True):
+        a = agents.run_settings(AG["writer"], outside=outside)["args"]
+        allowed = a[a.index("--allowedTools") + 1]
+        assert "Bash(maxxing enterprise show:*)" in allowed and "Bash(maxxing enterprise tasks:*)" in allowed
+        assert "Bash(maxxing enterprise profile:*)" in allowed

@@ -289,7 +289,7 @@ def test_structure_commands_are_refused_in_agent_turns(chart, monkeypatch):
 def test_sandboxed_turns_allow_the_work_commands():
     allowed = agent_guard.CLI_ALLOWED["enterprise"]
     assert allowed == {"assign", "done", "block", "escalate", "answer", "decide", "request", "objective", "show",
-                       "profile", "route", "worker", "meeting", "review"}
+                       "profile", "route", "worker", "meeting", "review", "tasks", "report-to-owner"}
     assert not allowed & agent_guard.ENTERPRISE_OWNER_ONLY
 
 
@@ -340,3 +340,18 @@ def test_hire_review_and_meeting_commands(chart, monkeypatch):
 
 def test_meeting_and_review_are_allowed_in_a_sandboxed_turn():
     assert {"meeting", "review"} <= agent_guard.CLI_ALLOWED["enterprise"]
+
+
+def test_tasks_and_report_to_owner_commands(chart, monkeypatch):
+    got = []
+    rows = [{"id": "t_1", "title": "Draft", "owner": "writer", "requester": "lead", "status": "doing", "stage": "",
+             "created": time.time(), "last_move": time.time(), "hops": 1, "outside": False, "run": None},
+            {"id": "t_2", "title": "Other", "owner": "lead", "requester": "", "status": "doing", "stage": "",
+             "created": time.time(), "last_move": time.time(), "hops": 1, "outside": False, "run": None}]
+    _fake(monkeypatch, "enterprise_flow", tasks_view=lambda slug, include_done=False: rows,
+          report_to_owner=lambda slug, pos, text, session="": got.append((pos, text)) or {"ok": True})
+    code, out, _ = chart("tasks", "--as", "writer", "--mine")
+    assert code == 0 and "t_1" in out and "t_2" not in out
+    code, out, _ = chart("tasks", "--json")
+    assert code == 0 and len(json.loads(out)) == 2
+    assert chart("report-to-owner", "--as", "lead", "all", "good")[0] == 0 and got == [("lead", "all good")]

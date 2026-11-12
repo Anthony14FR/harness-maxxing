@@ -668,6 +668,18 @@ def _enterprise_no_workers(path: str) -> list[str]:
         return []
 
 
+ENTERPRISE_READONLY = tuple(f"Bash(maxxing enterprise {c}:*)" for c in ("show", "profile", "tasks"))
+
+
+def _enterprise_readonly(path: str) -> list[str]:
+    """The read-only enterprise commands an occupant always runs without asking, outside runs included."""
+    try:
+        from . import enterprises
+        return list(ENTERPRISE_READONLY) if enterprises.feature_on() and enterprises.seat_of(path) else []
+    except Exception:  # noqa: BLE001 - a turn never fails for it
+        return []
+
+
 DESK_TOOLS = "Bash(maxxing enterprise profile:*),Bash(maxxing enterprise route:*)"   # a front desk run: these two only
 
 
@@ -709,8 +721,9 @@ def run_settings(path: str, outside: bool = False, session: str | None = None, g
     args: list[str] = []
     forced = outside and not a["trust_outside"]
     # pre-allowed tools never ask: in a turn started by outside text they would skip the approvals it gets
-    if a["allowed_tools"] and not forced:
-        args += ["--allowedTools", ",".join(a["allowed_tools"])]
+    pre_ok = ([] if forced else list(a["allowed_tools"])) + ([] if desk else _enterprise_readonly(path))
+    if pre_ok:
+        args += ["--allowedTools", ",".join(dict.fromkeys(pre_ok))]
     no_workers = _enterprise_no_workers(path)
     if a["disallowed_tools"] or no_workers:
         args += ["--disallowedTools", ",".join(dict.fromkeys([*a["disallowed_tools"], *no_workers]))]
