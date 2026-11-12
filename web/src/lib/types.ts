@@ -588,7 +588,9 @@ export type EnterpriseOverview = {
   digest_cost: number
 }
 export type EnterpriseReport = { name: string; date: string; kind: 'daily' | 'weekly' | 'monthly' }
-export type EnterpriseRequest = { id: string; category: string; position: string; text: string; amount: number | null; status: string; decider: string; at: number; outside: boolean; title?: string; department?: string; reports_to?: string; topic?: string; name?: string; role?: string; job?: string; model?: string; effort?: string }
+export type EnterpriseRequest = { id: string; category: string; position: string; text: string; amount: number | null; status: string; decider: string; at: number; outside: boolean; title?: string; department?: string; reports_to?: string; topic?: string; name?: string; role?: string; job?: string; model?: string; effort?: string
+  /** hire requests: what the owner's Accept creates (the server nests it here) */
+  hire?: { title?: string; department?: string; reports_to?: string; topic?: string; name?: string; role?: string; job?: string; model?: string; effort?: string } }
 export type EnterpriseEscalation = { id: string; position: string; text: string; task: string; level: number; deadline: number; status: string; at: number; outside: boolean; to: string }
 export type EnterpriseAbout = { text: string; max: number; note_max: number }
 export type EnterpriseProfileProduct = { name?: string; price?: string; url?: string; [k: string]: unknown }
