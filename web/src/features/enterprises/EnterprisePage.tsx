@@ -7,6 +7,7 @@ import { enterpriseRoute, useEnterprise } from '@/lib/queries'
 import { cn } from '@/lib/utils'
 import { Button, EmptyState, Sensitive, Skeleton } from '@/components/ui'
 import { PageBody, PageHeader } from '@/components/shell/Page'
+import { NowStrip } from './NowStrip'
 import { ENTERPRISE_TABS } from './tabs'
 
 export default function EnterprisePage() {
@@ -51,6 +52,7 @@ export default function EnterprisePage() {
           />
         ) : (
           <div className="grid gap-5">
+            <NowStrip enterprise={e} />
             <nav aria-label={t('ent.tabs')} className="-mb-px flex gap-1 overflow-x-auto border-b">
               {tabs.map((x, i) => (
                 <NavLink

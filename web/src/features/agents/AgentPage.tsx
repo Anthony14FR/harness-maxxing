@@ -18,6 +18,7 @@ import {
   PencilLine, Globe, Hand,
 } from 'lucide-react'
 import { useLang, useT, type TFn } from '@/i18n'
+import { Delegations, useIsSeated } from './Delegations'
 import { errorMessage } from '@/lib/api'
 import {
   agentRoute, agentRunRoute, useAgent, useAgentSandbox, useAgentSeen, useAgentTemplates, useAgentThread, fetchAgentThreadBefore, useCrons, useFileContent, useNewAgentChat, usePatchAgent, useRunAgent, useStopSession, useWorkspace, useWriteFile,
@@ -1295,6 +1296,7 @@ function Profile({ agent: a }: { agent: AgentDetail }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [want])
   const [memory, setMemory] = React.useState(false)
+  const seated = useIsSeated(a.path)
   const lim = a.limits
   const spent = a.cost_today || 0
   return (
@@ -1309,6 +1311,12 @@ function Profile({ agent: a }: { agent: AgentDetail }) {
       <PanelSection title={t('agents.panel.role')}>
         <RoleEditor agent={a} />
       </PanelSection>
+
+      {seated && (
+        <PanelSection title={t('agents.deleg.title')}>
+          <Delegations path={a.path} />
+        </PanelSection>
+      )}
 
       <PanelSection title={t('agents.panel.when')}>
         <AgentTriggers agent={a} onMailSettings={() => setAdvanced('mail')} />

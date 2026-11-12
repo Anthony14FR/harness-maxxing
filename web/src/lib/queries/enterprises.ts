@@ -1,6 +1,6 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { api, seg } from '../api'
-import type { DecisionItem, Enterprise, EnterpriseAbout, EnterpriseBuilt, EnterpriseEscalation, EnterpriseInput, EnterpriseMeeting, HireBody, DeskMessage, DeskSettingsPatch, DeskSuggestion, EnterpriseDesk, EnterpriseInsights, EnterpriseOverview, EnterpriseWorker, EnterprisePatch, EnterpriseProfile, EnterpriseReport, EnterpriseReportDoc, EnterpriseRequest, EnterpriseSummary, EnterpriseTemplate, InboxItem, Ok, PositionInput, PositionPatch } from '../types'
+import type { DecisionItem, Enterprise, EnterpriseAbout, EnterpriseBuilt, EnterpriseEscalation, EnterpriseInput, EnterpriseMeeting, HireBody, DeskMessage, DeskSettingsPatch, DeskSuggestion, EnterpriseDesk, EnterpriseInsights, EnterpriseOverview, EnterpriseWorker, EnterprisePatch, EnterpriseProfile, EnterpriseReport, EnterpriseReportDoc, EnterpriseRequest, EnterpriseNow, EnterpriseSummary, EnterpriseTask, EnterpriseTemplate, InboxItem, Ok, PositionInput, PositionPatch } from '../types'
 import { qk } from './keys'
 import { useMut } from './util'
 
@@ -26,6 +26,8 @@ export const entKeys = {
   suggestions: (id: string) => ['enterprises', 'suggestions', id] as const,
   workers: (id: string) => ['enterprises', 'workers', id] as const,
   meetings: (id: string) => ['enterprises', 'meetings', id] as const,
+  tasks: (id: string) => ['enterprises', 'tasks', id] as const,
+  now: (id: string) => ['enterprises', 'now', id] as const,
 }
 
 const base = (id: string, sub = '') => `/api/enterprises/${seg(id)}${sub}`
@@ -241,4 +243,13 @@ export const enterpriseExportUrl = (id: string) => base(id, '/export')
 export function useImportEnterprise() {
   const put = usePutEnterprise()
   return useMut((file: File) => api.post<Enterprise & { skipped?: { file: string; reason: string }[] }>('/api/enterprises/import', file), { onSuccess: put, invalidate: inv })
+}
+
+/** The delegated tasks of the enterprise (requester, owner, state, age, last move, the owner's latest run). */
+export function useEnterpriseTasks(id: string | null) {
+  return useQuery({ queryKey: entKeys.tasks(id || ''), queryFn: () => api.get<{ items: EnterpriseTask[] }>(base(id!, '/tasks')).then((r) => r.items), enabled: !!id })
+}
+/** Who works on what right now; polled lightly because "since" only moves with the clock. */
+export function useEnterpriseNow(id: string | null) {
+  return useQuery({ queryKey: entKeys.now(id || ''), queryFn: () => api.get<{ items: EnterpriseNow[] }>(base(id!, '/now')).then((r) => r.items), enabled: !!id, refetchInterval: 30_000 })
 }
