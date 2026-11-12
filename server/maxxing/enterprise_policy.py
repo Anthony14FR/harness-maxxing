@@ -39,7 +39,6 @@ def _row(label: str, careful: str, balanced: str, autonomous: str, enforced: str
 CATEGORIES: dict[str, dict] = {
     "assign_own": _row("Assign to a direct report, read the profile, write in one's department", "free", "free", "free"),
     "deliver_cross": _row("Deliver into another department's folder", "owner", "lead", "lead"),
-    "assign_cross": _row("Assign across departments", "owner", "lead", "lead"),
     "edit_job": _row("Edit a report's job description", "owner", "lead", "lead"),
     "worker": _row("Create a worker from an approved template", "owner", "lead", "lead"),
     "profile_edit": _row("Edit the company profile (not prices or terms)", "owner", "lead", "lead"),
@@ -60,10 +59,11 @@ GRANT_NOTE = ("Allowing a request grants nothing: a key, a domain or a folder it
 _NEEDS_RE = re.compile(r"\b(keys?|domains?|folders?|sandbox|secret|token|password)\b", re.I)
 TOP_NEVER = ("hire", "hire_remove", "profile_terms", "desk_live")        # stay with the owner even when the top decides
 
+LEGACY_LABELS = {"assign_cross": ("Assign across departments", "Confier une tâche à un autre département")}   # nothing creates it any more: old stored requests keep a name
+
 LABELS_FR = {
     "assign_own": "Confier à un subordonné direct, lire le profil, écrire dans son département",
     "deliver_cross": "Livrer dans le dossier d'un autre département",
-    "assign_cross": "Confier une tâche à un autre département",
     "edit_job": "Modifier la fiche de poste d'un subordonné",
     "worker": "Créer un intervenant à partir d'un modèle approuvé",
     "profile_edit": "Modifier le profil de l'entreprise (hors prix et conditions)",
@@ -110,8 +110,18 @@ TEXTS = {
                   "fr": "Fait : le poste {pos} est créé et {name} est embauché."},
     "hire_failed": {"en": "Not done: the position could not be created ({reason}).",
                     "fr": "Non fait : le poste n'a pas pu être créé ({reason})."},
-    "hire_card": {"en": "\nPosition: {title}\nDepartment: {department}\nReports to: {reports_to}\nTopic: {topic}\nAgent: {name}",
-                  "fr": "\nPoste : {title}\nDépartement : {department}\nRattaché à : {reports_to}\nSujet : {topic}\nAgent : {name}"},
+    "hire_card": {"en": "\nPosition: {title}\nDepartment: {department}\nReports to: {reports_to}\nTopic: {topic}\nAgent: {name}"
+                        "\nJob: {job}\nModel: {model}\nEffort: {effort}\nRole: {role}{out}",
+                  "fr": "\nPoste : {title}\nDépartement : {department}\nRattaché à : {reports_to}\nSujet : {topic}\nAgent : {name}"
+                        "\nMission : {job}\nModèle : {model}\nEffort : {effort}\nRôle : {role}{out}"},
+    "hire_failed_title": {"en": "Hire not done: {title}", "fr": "Embauche non faite : {title}"},
+    "hire_failed_body": {"en": "You allowed the hire of {title} but it could not be carried out: {reason}",
+                         "fr": "Vous avez accepté l'embauche de {title} mais elle n'a pas pu être faite : {reason}"},
+    "resolved_allow": {"en": "Allowed", "fr": "Autorisée"},
+    "resolved_deny": {"en": "Denied", "fr": "Refusée"},
+    "on_telegram": {"en": " on Telegram", "fr": " sur Telegram"},
+    "returned": {"en": "Returned to the owner: the top position no longer decides.",
+                 "fr": "Rendue au propriétaire : le poste du haut ne décide plus."},
     "env_dept": {"en": "The department {name}", "fr": "Le département {name}"},
     "env_ent": {"en": "The enterprise {name}", "fr": "L'entreprise {name}"},
     "env_title": {"en": "{label} reached its daily budget", "fr": "{label} a atteint son budget quotidien"},
@@ -136,8 +146,9 @@ def _t(key: str, **kw: Any) -> str:
 
 
 def _label(category: str) -> str:
-    en = CATEGORIES.get(category, {}).get("label", category)
-    return LABELS_FR.get(category, en) if _lang() == "fr" else en
+    en = CATEGORIES.get(category, {}).get("label") or LEGACY_LABELS.get(category, (category, category))[0]
+    fr = LABELS_FR.get(category) or LEGACY_LABELS.get(category, (en, en))[1]
+    return fr if _lang() == "fr" else en
 
 
 def _now(now: float | None = None) -> float:
@@ -173,7 +184,12 @@ def _write(slug: str, items: list[dict]) -> None:
 def _public(r: dict) -> dict:
     keys = ("id", "category", "position", "text", "amount", "status", "decider", "at", "outside", "deadline",
             "decided_by", "decided_at", "reason", "level")
-    return {k: r.get(k) for k in keys}
+    out = {k: r.get(k) for k in keys}
+    if r.get("category") == "hire" and isinstance(r.get("payload"), dict):
+        p = r["payload"]
+        out["hire"] = {**{k: str(p.get(k) or "") for k in ("title", "department", "reports_to", "job", "topic", "name",
+                                                          "model", "effort")}, "role": str(p.get("role") or "")[:600]}
+    return out
 
 
 def requests(slug: str, pending_only: bool = False) -> list[dict]:
@@ -253,9 +269,9 @@ def _top_decides(slug: str) -> bool:
     return bool(enterprises.setting(slug, "top_decides"))
 
 
-def _owner_or_top(slug: str, category: str) -> tuple[str, str]:
+def _owner_or_top(slug: str, category: str, use_top: bool = True) -> tuple[str, str]:
     """What would go to the owner goes to the top position when the setting is on (never the invariants)."""
-    if category in TOP_NEVER or not _top_decides(slug):
+    if category in TOP_NEVER or not use_top or not _top_decides(slug):
         return "owner", ""
     top = _data(slug).get("top")
     if isinstance(top, str) and top != "owner" and enterprises.position(slug, top):
@@ -264,13 +280,13 @@ def _owner_or_top(slug: str, category: str) -> tuple[str, str]:
 
 
 def _route(slug: str, pos: str, category: str, amount: float | None, outside: bool,
-           now: float | None = None) -> tuple[str, str]:
+           now: float | None = None, use_top: bool = True) -> tuple[str, str]:
     """(kind, who): free | lead | owner, and the deciding position for a lead. Structure only: it does not look at
     whether the lead is running (request() skips the ones that are not)."""
     if outside or category not in CATEGORIES:
         return "owner", ""                                   # invariant 1; an unknown category is never delegated
     if category == "spending" and amount is None:
-        return _owner_or_top(slug, category)                 # undeclared spending
+        return _owner_or_top(slug, category, use_top)        # undeclared spending
     granted = _grant(slug, pos, category, amount, _now(now))
     if granted:
         return "lead", granted
@@ -282,8 +298,8 @@ def _route(slug: str, pos: str, category: str, amount: float | None, outside: bo
     row = CATEGORIES[category][profile if profile in PROFILES else "balanced"]
     if row == "lead":
         lead = enterprises.lead_of(slug, pos)
-        return ("lead", lead) if lead else _owner_or_top(slug, category)     # the top of the chart reports to the owner
-    return (row, "") if row != "owner" else _owner_or_top(slug, category)
+        return ("lead", lead) if lead else _owner_or_top(slug, category, use_top)     # the top of the chart reports to the owner
+    return (row, "") if row != "owner" else _owner_or_top(slug, category, use_top)
 
 
 def decider(slug: str, pos: str, category: str, *, amount: float | None = None, outside: bool = False) -> str:
@@ -356,7 +372,9 @@ def _notify(slug: str, r: dict) -> None:
         p = r["payload"]
         body += _t("hire_card", title=p.get("title") or "", department=p.get("department") or "-",
                    reports_to=p.get("reports_to") or r["position"], topic=p.get("topic") or "",
-                   name=p.get("name") or p.get("title") or "")
+                   name=p.get("name") or p.get("title") or "", job=p.get("job") or "-", model=p.get("model") or "-",
+                   effort=p.get("effort") or "-", role=str(p.get("role") or "-")[:600],
+                   out=_t("outside_tag") if r.get("outside") else "")
     actions = [{"id": "allow", "label": _t("allow"), "style": "primary"},
                {"id": "deny", "label": _t("deny"), "style": "danger"}, {"id": "open", "label": _t("open"), "style": "link"}]
     url = f"/enterprises/{slug}"
@@ -408,9 +426,8 @@ def request(slug: str, pos: str, category: str, text: str, *, amount: float | No
         if isinstance(amount, bool) or not isinstance(amount, (int, float)) or amount != amount or not 0 <= amount <= 1e9:
             raise EnterpriseError(400, "invalid", "amount: a number of USD")
         amount = round(float(amount), 2)
-    if category == "hire" and not (isinstance(payload, dict) and str(payload.get("title") or "").strip()
-                                   and str(payload.get("topic") or "").strip()):
-        raise EnterpriseError(400, "invalid", "A hire request needs a title and a topic")
+    if category == "hire":
+        payload = _check_hire(slug, pos, payload)
     now = time.time()
     kind, who = _route(slug, pos, category, amount, outside, now)
     if kind == "lead" and not _ready(slug, who):
@@ -421,7 +438,9 @@ def request(slug: str, pos: str, category: str, text: str, *, amount: float | No
                          "amount": amount, "status": "pending", "decider": who or kind, "at": now,
                          "outside": bool(outside), "session": str(session or "")[:64], "deadline": None,
                          "decided_by": "", "decided_at": None, "reason": "", "level": 0,
-                         "payload": payload if isinstance(payload, dict) and len(json.dumps(payload, default=str)) < 20000 else None}
+                         "payload": payload if isinstance(payload, dict) else None}
+    if kind == "lead" and _top_decides(slug) and _route(slug, pos, category, amount, outside, now, use_top=False)[0] == "owner":
+        r["for_owner"] = True                                # the top decides in the owner's place: taken back when that stops
     if kind == "free":
         r.update(status="allowed", decider="free", decided_by="policy", decided_at=now)
     elif kind == "lead":
@@ -438,6 +457,50 @@ def request(slug: str, pos: str, category: str, text: str, *, amount: float | No
         _hand_to(slug, r, r["decider"])
     enterprises.invalidate(slug)
     return _public(r)
+
+
+HIRE_MAX = 20000
+
+
+def _check_hire(slug: str, pos: str, payload: Any) -> dict:
+    """The payload of a hire request, checked at once so the requester hears what is wrong."""
+    if not (isinstance(payload, dict) and str(payload.get("title") or "").strip() and str(payload.get("topic") or "").strip()):
+        raise EnterpriseError(400, "invalid", "A hire request needs a title and a topic")
+    if len(json.dumps(payload, default=str)) >= HIRE_MAX:
+        raise EnterpriseError(400, "invalid", f"The hire request is too long: keep the role and the job under {HIRE_MAX // 2} characters")
+    out = dict(payload)
+    lead = str(out.get("reports_to") or "") or pos
+    if not enterprises.position(slug, lead):
+        raise EnterpriseError(400, "bad_position", f"reports-to: the position {lead!r} does not exist")
+    out["reports_to"] = lead
+    lead_dept = enterprises.department_of(slug, lead) or ""
+    dept = str(out.get("department") or "") or lead_dept
+    if dept and dept not in (_data(slug).get("departments") or {}):
+        raise EnterpriseError(400, "invalid", f"department: {dept!r} is not a department of this enterprise")
+    if lead_dept and dept != lead_dept:
+        raise EnterpriseError(400, "invalid", f"department: a position under {lead!r} stays in {lead_dept!r}")
+    out["department"] = dept
+    return out
+
+
+def release_top(slug: str) -> None:
+    """Pending requests the top held in the owner's place go back to the owner once the top no longer decides."""
+    back: list[dict] = []
+    with enterprises._lock:
+        items = _read(slug)
+        top = _data(slug).get("top")
+        for r in items:
+            if r.get("status") == "pending" and r.get("for_owner") and not (_top_decides(slug) and r.get("decider") == top):
+                r.update(decider="owner", for_owner=False, deadline=None)
+                back.append(dict(r))
+        if back:
+            _write(slug, items)
+    for r in back:
+        enterprises.log(slug, "request", f"{r['category']} -> owner: {_t('returned')}", by="server", position=r["position"],
+                        session=r.get("session") or "")
+        _hand_to(slug, r, "owner")
+    if back:
+        enterprises.invalidate(slug)
 
 
 def _needs_note(r: dict) -> str:
@@ -464,6 +527,8 @@ def decide(slug: str, req_id: str, decision: str, *, reason: str = "", by: str |
         top_ok = (not owner and r["decider"] == by and by == _data(slug).get("top") and _top_decides(slug)
                   and r["category"] not in TOP_NEVER and not r.get("outside"))
         if not owner and not top_ok:
+            if r.get("for_owner"):
+                raise EnterpriseError(403, "not_decider", "This request waits for the owner")
             if by == r["position"]:
                 raise EnterpriseError(403, "self_decision", "Nobody decides their own request")
             if by not in enterprises.ancestors(slug, r["position"]):
@@ -490,7 +555,7 @@ def decide(slug: str, req_id: str, decision: str, *, reason: str = "", by: str |
                     by="owner" if owner else by, position=r["position"], session=r.get("session") or "")
     with contextlib.suppress(Exception):
         from . import feed
-        how = ("Allowed" if decision == "allow" else "Denied") + (" on Telegram" if via == "telegram" else "")
+        how = _t("resolved_allow" if decision == "allow" else "resolved_deny") + (_t("on_telegram") if via == "telegram" else "")
         feed.resolve(f"enterprise:{slug}:{r['id']}", how, read=True, level="info" if decision == "allow" else "warning")
     enterprises.invalidate(slug)
     return _public(r)
@@ -523,6 +588,29 @@ def _position_id(slug: str, title: str) -> str:
     return pid
 
 
+def _requester_boxed(slug: str, pos: str) -> bool:
+    """The requester's occupant is protected (sandboxed): the agent it hires is too."""
+    try:
+        path = (enterprises.position(slug, pos) or {}).get("agent")
+        return bool(path and agents.exists(path) and agents.load(path)["sandbox"])
+    except Exception:  # noqa: BLE001 - when unsure, protect
+        return True
+
+
+def _hire_failed(slug: str, r: dict, title: str, reason: str) -> str:
+    """A hire the owner allowed that could not be carried out: logged, the owner hears it, the requester gets the sentence."""
+    enterprises.log(slug, "request_failed", f"The allowed request {r['id']} could not be carried out: {reason}", by="policy",
+                    position=r["position"])
+    try:
+        from . import enterprise_reports
+        enterprise_reports.notify_owner(slug, _t("hire_failed_title", title=title),
+                                        _t("hire_failed_body", title=title, reason=reason), level="warning",
+                                        url=f"/enterprises/{slug}", dedupe=f"enterprise:{slug}:{r['id']}:hire_failed")
+    except Exception:  # noqa: BLE001
+        log.exception("enterprise %s: owner notification failed", slug)
+    return _t("hire_failed", reason=reason)
+
+
 def _hire(slug: str, r: dict) -> str:
     """An allowed hire request: create the position under its lead, then the agent that holds it. A failure leaves
     nothing behind (the position is removed again). -> a sentence for the requester."""
@@ -534,29 +622,27 @@ def _hire(slug: str, r: dict) -> str:
     try:
         enterprises.add_position(slug, {"id": pid, "title": title, "reports_to": lead,
                                         "department": str(p.get("department") or ""), "job": str(p.get("job") or "")})
-    except (EnterpriseError, agents.AgentError) as e:
-        enterprises.log(slug, "request_failed", f"The allowed request {r['id']} could not be carried out", by="policy",
-                        position=r["position"])
-        return _t("hire_failed", reason=e.message)
+    except Exception as e:  # noqa: BLE001 - the decision stands; nothing was created
+        log.exception("enterprise %s: position for a hire not added", slug)
+        return _hire_failed(slug, r, title, getattr(e, "message", None) or str(e)[:200])
     name = str(p.get("name") or "").strip() or title
     kw = {k: p[k] for k in ("model", "effort") if p.get(k)}
     if p.get("role"):
         kw["role"] = str(p["role"])
+    kw["sandbox"] = _requester_boxed(slug, r["position"])
     try:
         enterprises.hire_custom(slug, pid, topic, name=name, **kw)
     except Exception as e:  # noqa: BLE001 - the decision stands; the half-made position goes
         log.exception("enterprise %s: hire failed", slug)
         with contextlib.suppress(Exception):
             enterprises.remove_position(slug, pid)
-        enterprises.log(slug, "request_failed", f"The allowed request {r['id']} could not be carried out", by="policy",
-                        position=r["position"])
-        return _t("hire_failed", reason=getattr(e, "message", None) or str(e)[:200])
+        return _hire_failed(slug, r, title, getattr(e, "message", None) or str(e)[:200])
     enterprises.log(slug, "hire", f"{title} hired ({pid})", by="policy", position=pid)
     return _t("hire_done", pos=title, name=name)
 
 
 def _run_payload(slug: str, r: dict) -> str:
-    """Carries out what an allowed request can be carried out as: an assignment across departments, a job description
+    """Carries out what an allowed request can be carried out as: a job description
     or a re-seat of a position under the requester. -> a sentence for the requester ("" when nothing is left to do),
     OWNER_APPLIES when the owner still has to apply it."""
     p = r.get("payload") if isinstance(r.get("payload"), dict) else {}
@@ -564,12 +650,6 @@ def _run_payload(slug: str, r: dict) -> str:
     if cat == "hire":
         return _hire(slug, r)
     try:
-        if cat == "assign_cross" and p.get("to_pos"):
-            from . import enterprise_flow
-            enterprise_flow.assign(slug, pos, p["to_pos"], p.get("deliverable") or r["text"], due=p.get("due"),
-                                   parent=p.get("parent"), session=r.get("session") or "", outside=bool(r.get("outside")),
-                                   approved=True)
-            return ""
         target = p.get("position")
         if cat in ("edit_job", "reseat") and target in enterprises.subtree(slug, pos) and (
                 (cat == "edit_job" and isinstance(p.get("job"), str)) or (cat == "reseat" and p.get("agent"))):

@@ -61,7 +61,7 @@ def _msgs(pos, kind=None):
 # ---- the decider matrix ---------------------------------------------------------------------------------------
 MATRIX = {                                  # category: (careful, balanced, autonomous), written out on purpose
     "assign_own": ("free", "free", "free"), "deliver_cross": ("owner", "lead", "lead"),
-    "assign_cross": ("owner", "lead", "lead"), "edit_job": ("owner", "lead", "lead"), "worker": ("owner", "lead", "lead"),
+    "edit_job": ("owner", "lead", "lead"), "worker": ("owner", "lead", "lead"),
     "profile_edit": ("owner", "lead", "lead"), "raise_budget": ("owner", "owner", "lead"),
     "reseat": ("owner", "owner", "lead"), "profile_terms": ("owner",) * 3, "desk_live": ("owner",) * 3,
     "hire_remove": ("owner",) * 3, "hire": ("owner",) * 3, "spending_high": ("owner",) * 3, "recurring": ("owner",) * 3, "publish": ("owner",) * 3,
@@ -208,7 +208,7 @@ def test_allow_never_grants(ent):
     r = pol.request(SLUG, "writer", "deliver_cross", "Drop a file into the operations folder")
     pol.decide(SLUG, r["id"], "allow", by="head")
     assert "grants nothing" in _msgs("writer", "decision")[-1]["text"]
-    r = pol.request(SLUG, "writer", "assign_cross", "Give the ops lead a task")
+    r = pol.request(SLUG, "writer", "edit_job", "Give the ops lead a task")
     pol.decide(SLUG, r["id"], "deny", by="head", reason="not now")
     assert "grants nothing" not in _msgs("writer", "decision")[-1]["text"]
 
@@ -591,11 +591,16 @@ HIRE = {"title": "Support Agent", "department": "ops", "reports_to": "ops", "job
         "effort": "high"}
 
 
+BOXED: list[bool] = []                                          # the `sandbox` each fake hire was asked for
+
+
 def _fake_hire(monkeypatch, fail=False):
     calls = []
+    BOXED.clear()
 
-    def hire_custom(slug, pos, topic, name=None, role=None, model=None, effort=None):
+    def hire_custom(slug, pos, topic, name=None, role=None, model=None, effort=None, sandbox=False):
         calls.append((slug, pos, topic, name, role, model, effort))
+        BOXED.append(sandbox)
         if fail:
             raise enterprises.EnterpriseError(400, "bad_project", "no such topic")
         return "projects/acme/topics/blog/agents/sam"
@@ -661,3 +666,104 @@ def test_texts_follow_the_server_language(ent, monkeypatch):
 
 def test_every_category_has_a_french_label():
     assert set(pol.LABELS_FR) == set(pol.CATEGORIES)
+
+
+# ---- the top gives the owner's requests back, hire cards, hire checks ---------------------------------------------
+def test_requests_held_by_the_top_go_back_to_the_owner_when_it_stops_deciding(ent):
+    _set(ent, top="boss", settings={"top_decides": True, "autonomy": "careful"})
+    r = pol.request(SLUG, "writer", "deliver_cross", "Drop a file into the operations folder")
+    assert r["decider"] == "boss" and _msgs("boss", "request")
+    assert not feed.find(f"enterprise:{SLUG}:{r['id']}")
+    _set(ent, settings={"top_decides": False})
+    got = next(x for x in pol.requests(SLUG) if x["id"] == r["id"])
+    assert got["decider"] == "owner" and feed.find(f"enterprise:{SLUG}:{r['id']}")
+    with pytest.raises(enterprises.EnterpriseError) as e:
+        pol.decide(SLUG, r["id"], "allow", by="boss")
+    assert e.value.status == 403
+    assert pol.decide(SLUG, r["id"], "allow")["status"] == "allowed"
+
+
+def test_requests_held_by_the_top_go_back_to_the_owner_when_the_top_changes(ent):
+    _set(ent, top="boss", settings={"top_decides": True, "autonomy": "careful"})
+    r = pol.request(SLUG, "writer", "deliver_cross", "Drop a file into the operations folder")
+    assert r["decider"] == "boss"
+    _set(ent, top="owner")
+    assert next(x for x in pol.requests(SLUG) if x["id"] == r["id"])["decider"] == "owner"
+    assert enterprises.setting(SLUG, "top_decides") is False
+
+
+def test_a_lead_request_that_never_went_to_the_top_stays_with_its_lead(ent):
+    _set(ent, top="boss", settings={"top_decides": True})
+    r = pol.request(SLUG, "writer", "publish", "Post it")
+    assert r["decider"] == "boss"
+    other = pol.request(SLUG, "writer", "edit_job", "Change the job")
+    assert other["decider"] == "head"
+    _set(ent, settings={"top_decides": False})
+    reqs = {x["id"]: x for x in pol.requests(SLUG)}
+    assert reqs[other["id"]]["decider"] == "head" and reqs[r["id"]]["decider"] == "owner"
+
+
+def test_the_hire_card_and_the_list_show_what_will_be_created(ent, monkeypatch):
+    _fake_hire(monkeypatch)
+    role = "You answer customers. " + "x" * 700
+    r = pol.request(SLUG, "head", "hire", "Customers wait", outside=True, payload={**HIRE, "role": role})
+    body = _card(r)["body"]
+    for part in ("Answer customers", "sonnet", "high", "You answer customers.", "from outside text"):
+        assert part in body
+    assert "x" * 650 not in body
+    h = next(x for x in pol.requests(SLUG) if x["id"] == r["id"])
+    assert h["outside"] is True and h["hire"]["job"] == "Answer customers" and len(h["hire"]["role"]) == 600
+    assert h["hire"]["model"] == "sonnet" and h["hire"]["effort"] == "high"
+    assert "payload" not in h
+
+
+def test_a_hired_agent_is_protected_when_its_requester_is(ent, monkeypatch):
+    _fake_hire(monkeypatch)
+    pol.decide(SLUG, pol.request(SLUG, "head", "hire", "One", payload=HIRE)["id"], "allow")
+    assert BOXED == [False]
+    agents.update(HEAD, {"sandbox": True})
+    pol.decide(SLUG, pol.request(SLUG, "head", "hire", "Two", payload={**HIRE, "title": "Second Agent"})["id"], "allow")
+    assert BOXED == [False, True]
+
+
+def test_a_failed_hire_is_told_to_the_owner(ent, monkeypatch):
+    from maxxing import enterprise_reports
+    sent = []
+    monkeypatch.setattr(enterprise_reports, "notify_owner", lambda slug, title, body="", **kw: sent.append((title, body)))
+    _fake_hire(monkeypatch, fail=True)
+    r = pol.request(SLUG, "head", "hire", "One more", payload=HIRE)
+    sent.clear()
+    pol.decide(SLUG, r["id"], "allow")
+    assert any("Hire not done" in t and "no such topic" in b for t, b in sent)
+
+
+def test_hire_payload_is_checked_when_asked(ent):
+    def ask(**f):
+        return pol.request(SLUG, "head", "hire", "One more", payload={**HIRE, **f})
+
+    with pytest.raises(enterprises.EnterpriseError) as e:
+        ask(role="x" * 21000)
+    assert e.value.code == "invalid" and "too long" in e.value.message
+    with pytest.raises(enterprises.EnterpriseError) as e:
+        ask(reports_to="nobody")
+    assert e.value.status == 400 and e.value.code == "bad_position"
+    with pytest.raises(enterprises.EnterpriseError) as e:
+        ask(department="ops", reports_to="head")                    # head is in mkt: its report stays there
+    assert e.value.code == "invalid"
+    with pytest.raises(enterprises.EnterpriseError):
+        ask(department="nowhere", reports_to="boss")
+    r = pol.request(SLUG, "head", "hire", "One more", payload={k: v for k, v in HIRE.items() if k not in ("department", "reports_to")})
+    assert next(x for x in pol.requests(SLUG) if x["id"] == r["id"])["hire"]["department"] == "mkt"
+
+
+def test_an_old_assign_cross_request_still_decides_and_a_new_one_is_refused(ent):
+    with pytest.raises(enterprises.EnterpriseError) as e:
+        pol.request(SLUG, "writer", "assign_cross", "Give the ops lead a task")
+    assert e.value.code == "bad_category"
+    assert "assign_cross" not in pol.CATEGORIES
+    f = enterprises.state(SLUG) / "requests.json"
+    f.write_text(json.dumps({"items": [{"id": "old1", "category": "assign_cross", "position": "writer", "text": "Old one",
+                                        "amount": None, "status": "pending", "decider": "owner", "at": time.time(),
+                                        "outside": False}]}), encoding="utf-8")
+    assert pol.decide(SLUG, "old1", "allow")["status"] == "allowed"
+    assert pol._label("assign_cross") == "Assign across departments"
