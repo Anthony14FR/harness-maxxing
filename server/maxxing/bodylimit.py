@@ -41,6 +41,10 @@ def _public(path: str) -> bool:
     # /api/browser/mcp/<session>, /api/devices/mcp/<session> (loopback + the turn's token: api/browser.py, api/devices.py)
     return path.startswith(("/api/auth/", "/api/hooks/", "/api/team-peer/", "/api/browser/mcp/", "/api/devices/mcp/")) \
         or path == "/api/devices/pair"
+    # /api/browser/mcp/<session> (loopback + the turn's token: api/browser.py)
+    # /api/public/desk/<token> (the enterprise front desk's chat link: the token is the permission, 64 kB cap)
+    return path.startswith(("/api/auth/", "/api/hooks/", "/api/team-peer/", "/api/browser/mcp/", "/api/public/")) or \
+        path in ("/api/pc/pair", "/api/pc/mcp")
 
 
 def cap_for(method: str, path: str, authed: bool) -> int:
