@@ -679,7 +679,7 @@ def _notify(slug: str, title: str, body: str) -> None:
         from . import enterprise_reports
         fn = getattr(enterprise_reports, "notify_owner", None)
         if fn:
-            fn(slug, title, body, url=f"/enterprises/{slug}/overview", dedupe=f"insights:{slug}:{title}")
+            fn(slug, title, body, url=f"/enterprises/{slug}/overview", dedupe=f"insights:{slug}:{title}", always=True)
             return
     except Exception:  # noqa: BLE001
         log.exception("notify_owner")
