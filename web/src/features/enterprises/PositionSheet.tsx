@@ -251,7 +251,7 @@ function UntrustedSwitch({ enterprise: e, position: p }: { enterprise: Enterpris
 }
 
 /** The project / topic / name of an agent path, for its page route. */
-function agentOf(path: string): Pick<Agent, 'project' | 'topic' | 'name'> {
+export function agentOf(path: string): Pick<Agent, 'project' | 'topic' | 'name'> {
   const m = /^projects\/([^/]+)\/topics\/([^/]+)\/agents\/([^/]+)$/.exec(path)
   return { project: m?.[1] || '', topic: m?.[2] || '', name: m?.[3] || '' }
 }

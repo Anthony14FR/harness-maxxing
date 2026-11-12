@@ -10,6 +10,7 @@ import { OrgChart } from './OrgChart'
 import { Overview } from './Overview'
 import { ProfileTab } from './ProfileTab'
 import { Reports } from './Reports'
+import { Tasks } from './Tasks'
 
 export type EnterpriseTab = {
   /** the tab's address segment; the home tab's id is not shown in the address */
@@ -23,6 +24,7 @@ export type EnterpriseTab = {
 export const ENTERPRISE_TABS: EnterpriseTab[] = [
   { id: 'chart', label: 'ent.tab.chart', render: (e) => <OrgChart enterprise={e} /> },
   { id: 'overview', label: 'ent.tab.overview', render: (e) => <Overview enterprise={e} /> },
+  { id: 'tasks', label: 'ent.tab.tasks', render: (e) => <Tasks enterprise={e} /> },
   { id: 'decisions', label: 'ent.tab.decisions', render: (e) => <Decisions enterprise={e} /> },
   { id: 'desk', label: 'ent.tab.desk', show: (e) => !!e.settings.desk?.enabled || e.positions.some((p) => p.desk), render: (e) => <DeskTab enterprise={e} /> },
   { id: 'reports', label: 'ent.tab.reports', render: (e) => <Reports enterprise={e} /> },

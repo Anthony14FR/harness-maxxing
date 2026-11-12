@@ -2016,7 +2016,7 @@ const ENT_TEMPLATES = [
   { id: 'content', name: 'Content team', description: 'A head of content with a writer and a reviewer.', positions: [{ id: 'head', title: 'Head of content', reports_to: null, department: 'content' }, { id: 'writer', title: 'Writer', reports_to: 'head', department: 'content' }, { id: 'reviewer', title: 'Reviewer', reports_to: 'head', department: 'content' }] },
   { id: 'support', name: 'Customer care', description: 'A support lead and two agents.', positions: [{ id: 'lead', title: 'Support lead', reports_to: null, department: 'support' }, { id: 'agent-a', title: 'First line', reports_to: 'lead', department: 'support' }, { id: 'agent-b', title: 'Second line', reports_to: 'lead', department: 'support' }] },
 ]
-const ENT_SETTINGS = () => ({ communication: 'leads', allow: [], workers: 'discreet', autonomy: 'balanced', trust_chain: false, top_decides: false, shared_keys: [], review_by: '', escalation_timeout_h: 4,
+const ENT_SETTINGS = () => ({ communication: 'leads', allow: [], workers: 'discreet', autonomy: 'balanced', trust_chain: false, top_decides: false, zero_intervention: false, stale_h: 4, shared_keys: [], review_by: '', escalation_timeout_h: 4,
   digest: { enabled: true, hour: 8, per_lead: false, titles_only: false }, weekly: false, monthly: false, desk: { enabled: false, label: '', retention_days: 30, full_for: [], public: { enabled: false, token: '', rate_per_hour: 20, max_chars: 1000 } },
   limits: { depth: 4, reports: 8, workers_live: 5, hops_per_task: 6 } })
 function bigSeed() {
@@ -2079,7 +2079,9 @@ function entView(id) {
     return ceiling != null && sum > ceiling ? [{ department: dept, sum, ceiling, agents }] : []
   }
   const budget_warnings = [...Object.entries(e.departments).flatMap(([d, x]) => warn(d, x.envelope?.usd_per_day ?? null)), ...warn('', e.envelope.usd_per_day ?? null)]
-  return { id, name: e.name, emoji: e.emoji, rev: e.rev, projects: e.projects, top: e.top, settings: e.settings, envelope: e.envelope, departments: e.departments,
+  const zero = !!e.settings.zero_intervention
+  const effective = { autonomy: zero ? 'autonomous' : e.settings.autonomy, trust_chain: zero || e.settings.trust_chain, top_decides: zero || !!e.settings.top_decides }
+  return { id, name: e.name, emoji: e.emoji, rev: e.rev, projects: e.projects, top: e.top, settings: e.settings, effective, envelope: e.envelope, departments: e.departments,
     objectives: e.objectives, grants: e.grants, broken: false, sandbox_available: true, settings_warnings: e.settings.top_decides && !e.settings.trust_chain ? ['top_decides_needs_trust_chain'] : [], budget_warnings, positions, cost_today: +positions.reduce((n, p) => n + p.cost_today, 0).toFixed(2), ceiling_hit: false }
 }
 const entMerge = (a, b) => (b && typeof b === 'object' && !Array.isArray(b) ? Object.fromEntries([...new Set([...Object.keys(a || {}), ...Object.keys(b)])].map((k) => [k, k in b ? entMerge((a || {})[k], b[k]) : a[k]])) : b)
@@ -2111,6 +2113,7 @@ R('PATCH', '/api/enterprises/:e', ({ params, body }) => {
     const bad = e.positions.filter((p) => entAgent(p.agent) && !entAgent(p.agent).sandbox).map((p) => p.id)
     if (bad.length) fail(400, 'unprotected_occupants', `The front desk can only go live when every occupant of the enterprise is Protected (sandbox): ${bad.join(', ')}`)
   }
+  if ((body.settings?.zero_intervention ?? e.settings.zero_intervention) && (body.top ?? e.top) === 'owner') fail(400, 'needs_top', 'Total autonomy needs a top position')
   for (const k of ['name', 'emoji', 'top', 'settings', 'envelope', 'departments', 'objectives', 'grants']) if (body[k] !== undefined) e[k] = k === 'settings' ? entMerge(e[k], body[k]) : body[k]
   entTouch(e, params.e)
   return entView(params.e)
@@ -2193,6 +2196,27 @@ R('GET', '/api/enterprises/:e/meetings', ({ params }) => {
     { id: 'm2', topic: 'Spring launch: who does what', organizer: e.positions[0]?.id || 'owner', participants: [first, second], status: 'open', replies: [{ position: first, text: 'I can ship the landing page on Thursday.', at: now() - 900 }], minutes: '', at: now() - 3600, deadline: now() + 3 * 3600 },
     { id: 'm1', topic: 'Weekly sync', organizer: 'owner', participants: [first, second], status: 'closed', replies: [{ position: first, text: 'Nothing blocked.', at: now() - 90000 }, { position: second, text: 'Waiting on the new keywords.', at: now() - 89000 }], minutes: 'Nothing is blocked. Keywords are expected tomorrow.', at: now() - 91000, deadline: now() - 80000 },
   ] }
+})
+R('GET', '/api/enterprises/:e/tasks', ({ params }) => {
+  const e = entGet(params.e)
+  const lead = e.positions[0]?.id || 'owner'
+  const w = e.positions[1]?.id || lead
+  const s = e.positions[2]?.id || w
+  const t = now()
+  const sess = (p) => entAgent(e.positions.find((x) => x.id === p)?.agent)?.path || ''
+  return { items: [
+    { id: 't_9f3c2a', title: 'Three articles on the spring kit', owner: w, requester: lead, status: 'doing', stage: '', created: t - 7200, updated: t - 600, last_move: 'Draft of article 2 saved', hops: 1, outside: false, run: { session: sess(w), running: true } },
+    { id: 't_4b11de', title: 'Keyword list for the spring campaign', owner: s, requester: lead, status: 'todo', stage: '', created: t - 5400, updated: t - 5400, last_move: 'Assigned, waiting in the inbox', hops: 1, outside: false, run: null },
+    { id: 't_77aa01', title: 'Review the landing page copy', owner: lead, requester: w, status: 'doing', stage: 'review_pending', created: t - 86400, updated: t - 3600, last_move: 'Handed in for review', hops: 2, outside: false, run: { session: sess(lead), running: false } },
+    { id: 't_c0de42', title: 'Reply to the partner asking for a quote', owner: s, requester: lead, status: 'doing', stage: 'blocked', created: t - 172800, updated: t - 40000, last_move: 'Blocked: needs the price list', hops: 3, outside: true, run: null },
+    { id: 't_0d0ne1', title: 'Weekly newsletter', owner: w, requester: lead, status: 'done', stage: '', created: t - 259200, updated: t - 100000, last_move: 'Delivered', hops: 1, outside: false, run: null },
+  ] }
+})
+R('GET', '/api/enterprises/:e/now', ({ params }) => {
+  const e = entGet(params.e)
+  const v = entView(params.e)
+  const t = now()
+  return { items: v.positions.filter((p) => p.occupant).map((p, i) => ({ position: p.id, agent: p.occupant.path, state: p.state, task: i === 1 ? 'Three articles on the spring kit' : '', since: t - 600 * (i + 1) })) }
 })
 R('GET', '/api/enterprises/:e/positions/:pos/inbox', ({ params }) => ({ items: params.pos === 'writer' ? [{ id: 'i1', kind: 'assignment', from: 'marketing-lead', text: 'Three articles on the spring kit', task: 't_9f3c2a', at: now() - 3600, outside: false }] : [] }))
 const entState = (e) => (e.live ||= {

@@ -501,6 +501,10 @@ export type EnterpriseSettings = {
   trust_chain: boolean
   /** the top position decides instead of the owner (requests outside, hire, keys/domains/sandbox/folders, profile terms and the live desk stay with the owner) */
   top_decides?: boolean
+  /** total autonomy: while on, autonomy / trust_chain / top_decides take their effective values (see Enterprise.effective) */
+  zero_intervention?: boolean
+  /** hours without movement before the requester of an open delegated task is woken (0 = off) */
+  stale_h?: number
   /** vault key names every occupant gets at run time (still inside the department and enterprise key envelopes) */
   shared_keys?: string[]
   /** position id of the reviewer: a contributor's done goes to it first */
@@ -552,6 +556,8 @@ export type Enterprise = {
   projects: string[]
   top: string
   settings: EnterpriseSettings
+  /** what is really applied (total autonomy overrides the stored values) */
+  effective?: { autonomy: EnterpriseAutonomy; trust_chain: boolean; top_decides: boolean }
   envelope: EnterpriseEnvelope
   departments: Record<string, EnterpriseDepartment>
   objectives: EnterpriseObjective[]
@@ -567,6 +573,8 @@ export type Enterprise = {
   /** the members' daily budgets add up to more than the department's (department '' = the enterprise's) ceiling */
   budget_warnings?: EnterpriseBudgetWarning[]
 }
+export type EnterpriseTask = { id: string; title: string; owner: string; requester: string; status: string; stage: string; created: number; updated: number; last_move: string; hops: number; outside: boolean; run: { session: string; running: boolean } | null }
+export type EnterpriseNow = { position: string; agent: string; state: PositionState; task: string; since: number }
 export type EnterpriseBudgetWarning = { department: string; sum: number; ceiling: number; agents: string[] }
 export type EnterpriseInput = { id: string; name: string; emoji?: string; projects?: string[]; template?: string }
 export type EnterprisePatch = Partial<Pick<Enterprise, 'name' | 'emoji' | 'top' | 'settings' | 'envelope' | 'departments' | 'objectives' | 'grants'>>

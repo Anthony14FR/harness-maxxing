@@ -30,6 +30,7 @@ type Draft = {
   autonomy: EnterpriseAutonomy
   trust: boolean
   topDecides: boolean
+  zero: boolean
   sharedKeys: string[]
   reviewBy: string
   timeout: string
@@ -71,6 +72,7 @@ function draftOf(e: Enterprise): Draft {
     autonomy: s.autonomy,
     trust: s.trust_chain,
     topDecides: !!s.top_decides,
+    zero: !!s.zero_intervention,
     sharedKeys: s.shared_keys || [],
     reviewBy: s.review_by || '',
     timeout: String(s.escalation_timeout_h),
@@ -103,6 +105,7 @@ function patchOf(e: Enterprise, d: Draft) {
     autonomy: d.autonomy,
     trust_chain: d.trust,
     top_decides: d.top === OWNER ? false : d.topDecides,
+    zero_intervention: d.zero,
     shared_keys: d.sharedKeys,
     review_by: d.reviewBy,
     escalation_timeout_h: int(d.timeout, 1, 72, e.settings.escalation_timeout_h),
@@ -154,6 +157,8 @@ export function EnterpriseSettings({ enterprise: e }: { enterprise: Enterprise }
   const setDigest = (v: Partial<Draft['digest']>) => setD((x) => ({ ...x, digest: { ...x.digest, ...v } }))
   const setDept = (id: string, v: Partial<DeptDraft>) => setD((x) => ({ ...x, departments: x.departments.map((y) => (y.id === id ? { ...y, ...v } : y)) }))
   const roots = e.positions.filter((p) => !p.reports_to)
+  // total autonomy forces autonomy, trust and top-decides: the controls show those effective values, disabled
+  const zero = d.zero && d.top !== OWNER
   const [newDept, setNewDept] = React.useState('')
 
   const save = () => patch.mutate({ id: e.id, ...patchOf(e, d) }, { onSuccess: () => toast.success(t('ent.settings.saved')) })
@@ -175,6 +180,14 @@ export function EnterpriseSettings({ enterprise: e }: { enterprise: Enterprise }
   return (
     <div className="grid gap-6" data-testid="enterprise-settings">
       <SectionStack>
+        <SettingsCard title={t('ent.settings.zero')} description={t('ent.settings.zeroDesc')}>
+          <div className="divide-y">
+            <SettingRow label={t('ent.settings.zeroSwitch')} description={d.top === OWNER ? t('ent.settings.zeroNoTop') : t('ent.settings.zeroHow')} htmlFor="ent-zero">
+              <Switch id="ent-zero" checked={d.zero && d.top !== OWNER} disabled={d.top === OWNER && !d.zero} onCheckedChange={(v) => set('zero', v)} data-testid="zero-intervention" />
+            </SettingRow>
+          </div>
+        </SettingsCard>
+
         <SettingsCard title={t('ent.settings.general')} description={t('ent.settings.generalDesc')}>
           <div className="grid gap-4">
             <div className="grid grid-cols-[minmax(0,1fr)_5rem] gap-3">
@@ -208,16 +221,20 @@ export function EnterpriseSettings({ enterprise: e }: { enterprise: Enterprise }
             <SettingRow label={t('ent.settings.workers')} description={t(WORKERS_DESC[d.workers])}>
               {sel<EnterpriseWorkers>(d.workers, (v) => set('workers', v), [['discreet', 'ent.opt.discreet'], ['visible', 'ent.opt.visible'], ['off', 'ent.opt.off']])}
             </SettingRow>
-            <SettingRow label={t('ent.settings.autonomy')} description={t(AUTONOMY_DESC[d.autonomy])}>
-              {sel<EnterpriseAutonomy>(d.autonomy, (v) => set('autonomy', v), [['careful', 'ent.opt.careful'], ['balanced', 'ent.opt.balanced'], ['autonomous', 'ent.opt.autonomous']])}
+            <SettingRow label={t('ent.settings.autonomy')} description={zero ? t('ent.settings.zeroForced') : t(AUTONOMY_DESC[d.autonomy])}>
+              {zero ? (
+                <Select value="autonomous" onValueChange={() => {}} disabled options={[{ value: 'autonomous', label: t('ent.opt.autonomous') }]} className="w-56 max-w-full" />
+              ) : (
+                sel<EnterpriseAutonomy>(d.autonomy, (v) => set('autonomy', v), [['careful', 'ent.opt.careful'], ['balanced', 'ent.opt.balanced'], ['autonomous', 'ent.opt.autonomous']])
+              )}
             </SettingRow>
-            <SettingRow label={t('ent.settings.trust')} description={t('ent.settings.trustDesc')} htmlFor="ent-trust">
-              <Switch id="ent-trust" checked={d.trust} onCheckedChange={(v) => set('trust', v)} />
+            <SettingRow label={t('ent.settings.trust')} description={zero ? t('ent.settings.zeroForced') : t('ent.settings.trustDesc')} htmlFor="ent-trust">
+              <Switch id="ent-trust" checked={zero || d.trust} disabled={zero} onCheckedChange={(v) => set('trust', v)} />
             </SettingRow>
-            <SettingRow label={t('ent.settings.topDecides')} description={d.top === OWNER ? t('ent.settings.topDecidesNoTop') : t('ent.settings.topDecidesDesc')} htmlFor="ent-top-decides">
-              <Switch id="ent-top-decides" checked={d.topDecides && d.top !== OWNER} disabled={d.top === OWNER} onCheckedChange={(v) => set('topDecides', v)} data-testid="top-decides" />
+            <SettingRow label={t('ent.settings.topDecides')} description={zero ? t('ent.settings.zeroForced') : d.top === OWNER ? t('ent.settings.topDecidesNoTop') : t('ent.settings.topDecidesDesc')} htmlFor="ent-top-decides">
+              <Switch id="ent-top-decides" checked={zero || (d.topDecides && d.top !== OWNER)} disabled={zero || d.top === OWNER} onCheckedChange={(v) => set('topDecides', v)} data-testid="top-decides" />
             </SettingRow>
-            {d.topDecides && d.top !== OWNER && (!d.trust || (e.settings_warnings || []).includes('top_decides_needs_trust_chain')) && (
+            {!zero && d.topDecides && d.top !== OWNER && (!d.trust || (e.settings_warnings || []).includes('top_decides_needs_trust_chain')) && (
               <div className="py-4" data-testid="top-decides-warning">
                 <Callout
                   tone="warning"
