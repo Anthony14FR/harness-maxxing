@@ -22,6 +22,10 @@ From an agent turn, as the position of the caller (the owner passes --as POSITIO
   maxxing enterprise escalate TEXT [--task T]              ask one level up
   maxxing enterprise answer ID TEXT                        answer an escalation
   maxxing enterprise request CATEGORY TEXT [--amount N]    an organizational request, routed by category
+  maxxing enterprise request hire WHY --title T --department D --reports-to P --job TEXT --topic projects/<p>/topics/<t>
+                             --name N --role TEXT [--model M] [--effort E]   ask the owner to hire an agent into a new position
+  maxxing enterprise review TASK approve|changes [NOTES]   the reviewer approves a hand-in or asks for changes
+  maxxing enterprise meeting start TOPIC --with P1,P2 [--hours H] | reply ID TEXT   ask positions for their view; minutes follow
   maxxing enterprise decide ID allow|deny [REASON]         decide a request
   maxxing enterprise objective set ID VALUE                the value of an objective (its owner position only)
   maxxing enterprise route DEPARTMENT TEXT                 the front desk passes a request on (a task marked outside)
@@ -40,7 +44,8 @@ import time
 from . import cli
 
 TURN_CMDS = ("assign", "done", "block", "escalate", "answer", "request", "decide", "objective", "profile", "route",
-             "worker")
+             "worker", "meeting", "review")
+HIRE_KEYS = ("title", "department", "reports_to", "job", "topic", "name", "role", "model", "effort")
 STRUCTURE_CMDS = ("list", "create", "link", "unlink", "position", "settings", "grant", "report", "decisions", "export",
                   "import")
 GRANT_DAYS = 30
@@ -158,7 +163,30 @@ def _configure(p) -> None:
     s.add_argument("--position", default=None, help="edit_job / reseat: the position concerned")
     s.add_argument("--job", default=None, help="edit_job: the new job description")
     s.add_argument("--agent", default=None, help="reseat: the agent to seat")
+    s.add_argument("--title", default=None, help="hire: the new position's title")
+    s.add_argument("--department", default=None, help="hire: its department")
+    s.add_argument("--reports-to", default=None, help="hire: the position it reports to")
+    s.add_argument("--topic", default=None, help="hire: projects/<p>/topics/<t> where the agent is created")
+    s.add_argument("--name", default=None, help="hire: the agent's display name")
+    s.add_argument("--role", default=None, help="hire: the agent's CLAUDE.md text")
+    s.add_argument("--model", default=None, help="hire: the agent's model")
+    s.add_argument("--effort", default=None, choices=("low", "medium", "high", "xhigh", "max"), help="hire: its effort")
     who(s)
+    s = sub.add_parser("review", help="approve a hand-in or ask for changes (the reviewer)")
+    s.add_argument("task")
+    s.add_argument("decision", choices=("approve", "changes"))
+    s.add_argument("notes", nargs="*")
+    who(s)
+    m = sub.add_parser("meeting", help="ask positions for their view").add_subparsers(dest="meeting_cmd", required=True)
+    o = m.add_parser("start", help="call a meeting")
+    o.add_argument("topic", nargs="+")
+    o.add_argument("--with", dest="with_pos", required=True, metavar="POS1,POS2", help="the invited positions")
+    o.add_argument("--hours", type=float, default=None, help="hours before it closes with the replies it has (default 4)")
+    who(o)
+    o = m.add_parser("reply", help="answer a meeting you are invited to")
+    o.add_argument("id")
+    o.add_argument("text", nargs="+")
+    who(o)
     s = sub.add_parser("decide", help="decide a request")
     s.add_argument("id")
     s.add_argument("decision", choices=("allow", "deny"))
@@ -592,7 +620,15 @@ def _turn_cmd(a) -> int:
                                                            outside=outside)
         return _say(a, r, f"{a.id}: answered")
     if c == "request":
-        payload = {k: v for k, v in (("position", a.position), ("job", a.job), ("agent", a.agent)) if v} or None
+        payload = {k: v for k, v in (("position", a.position), ("job", a.job), ("agent", a.agent)) if v}
+        if a.category == "hire":
+            payload = {k: v for k, v in zip(HIRE_KEYS, (a.title, a.department, a.reports_to, a.job, a.topic, a.name,
+                                                       a.role, a.model, a.effort)) if v}
+            miss = [k for k in ("title", "topic") if not payload.get(k)]
+            if miss:
+                raise _Refused("request hire needs " + " and ".join("--" + k for k in miss) + " (see `maxxing enterprise "
+                               "request -h`).")
+        payload = payload or None
         if payload and payload.get("agent"):
             from . import cmd_agents
             try:
@@ -602,6 +638,12 @@ def _turn_cmd(a) -> int:
         r = _module("enterprise_policy", "request")(slug, _need_pos(pos, "`request`"), a.category, _text(a),
                                                     amount=a.amount, session=sess, outside=outside, payload=payload)
         return _say(a, r, f"request {r.get('id', '')} ({r.get('status', 'sent')})".replace("  ", " "))
+    if c == "review":
+        r = _module("enterprise_flow", "review")(slug, _need_pos(pos, "`review`"), a.task, a.decision,
+                                                 " ".join(a.notes).strip(), session=sess)
+        return _say(a, r, f"{a.task}: {'approved' if a.decision == 'approve' else 'sent back with changes'}")
+    if c == "meeting":
+        return _meeting(a, slug, pos, turn)
     if c == "route":
         r = _module("enterprise_desk", "route")(slug, _need_pos(pos, "`route`"), a.department, _text(a), session=sess)
         return _say(a, r, f"routed: task {r.get('id', '')}".strip())
@@ -612,6 +654,24 @@ def _turn_cmd(a) -> int:
                                                    by=pos or None, outside=outside)
         return _say(a, r, f"{a.id}: {a.decision}")
     return _objective(a, slug, pos)
+
+
+def _meeting(a, slug: str, pos: str, turn: dict) -> int:
+    if a.meeting_cmd == "reply":
+        m = _module("enterprise_flow", "reply_meeting")(slug, _need_pos(pos, "`meeting reply`"), a.id, _text(a),
+                                                        session=turn["session"])
+        if getattr(a, "json", False):
+            _out(m)
+            return 0
+        print(f"{a.id}: replied ({len(m['replies'])} of {len(m['participants'])})")
+        for r in m["replies"]:
+            if r["position"] != pos:
+                print(f"- {r['position']}: {r['text']}")
+        return 0
+    with_pos = [p.strip() for p in a.with_pos.split(",") if p.strip()]
+    m = _module("enterprise_flow", "start_meeting")(slug, pos, " ".join(a.topic).strip(), with_pos, hours=a.hours,
+                                                    session=turn["session"], outside=turn["outside"])
+    return _say(a, m, f"meeting {m['id']} called with {', '.join(m['participants'])}")
 
 
 def _worker(a, slug: str, pos: str, turn: dict) -> int:

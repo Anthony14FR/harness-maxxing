@@ -67,6 +67,31 @@ def answer_escalation(e: str, esc_id: str, body: AnswerIn):
         raise _bad(x) from None
 
 
+def _meeting(m: dict) -> dict:
+    keys = ("id", "topic", "organizer", "participants", "status", "replies", "minutes", "at", "deadline")
+    return {k: m.get(k) for k in keys}
+
+
+@router.get("/{e}/meetings")
+def list_meetings(e: str):
+    _on()
+    try:
+        enterprises.load(e)
+    except enterprises.EnterpriseError as x:
+        raise _bad(x) from None
+    return {"items": [_meeting(m) for m in enterprise_flow.meetings(e)]}
+
+
+@router.get("/{e}/meetings/{mid}")
+def get_meeting(e: str, mid: str):
+    _on()
+    try:
+        enterprises.load(e)
+        return _meeting(enterprise_flow.meeting(e, mid))
+    except enterprises.EnterpriseError as x:
+        raise _bad(x) from None
+
+
 def _run_ticker(name: str, now: float) -> None:
     try:
         fn = getattr(importlib.import_module(f"{__package__.rsplit('.', 1)[0]}.{name}"), "tick", None)
