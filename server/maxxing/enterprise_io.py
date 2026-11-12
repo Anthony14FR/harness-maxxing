@@ -66,7 +66,7 @@ def _reset_choices(d: dict, skipped: list[dict]) -> None:
         elif key in where:
             where[key] = copy.deepcopy(want)
 
-    for key in ("autonomy", "workers", "communication", "allow", "weekly", "monthly", "digest.enabled", "top_decides"):
+    for key in ("autonomy", "workers", "communication", "allow", "weekly", "monthly", "digest.enabled", "top_decides", "shared_keys"):
         reset(s, key, "settings")
     for dept, row in (d.get("departments") or {}).items():
         st = row.get("settings") if isinstance(row, dict) else None
@@ -85,6 +85,7 @@ def _portable(d: dict, slug: str) -> dict:
     out["id"] = slug
     out["grants"] = []
     _safe_settings(out)
+    out["settings"]["shared_keys"] = []                  # vault key names are local
     for p in out["positions"]:
         p["agent"] = None
         p.pop("worker_template", None)

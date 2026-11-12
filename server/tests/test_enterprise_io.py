@@ -291,3 +291,16 @@ def test_import_lists_a_position_with_a_reserved_id(cl):
     r = cl.post("/api/enterprises/import", content=_zip({"enterprise.json": chart}))
     assert r.status_code == 200, r.text
     assert any(s["file"] == "position policy" and "reserved" in s["reason"] for s in r.json()["skipped"])
+
+
+def test_shared_keys_never_travel_in_an_export_nor_an_import(cl):
+    assert cl.post(E, json={"id": "acme-group", "name": "Acme"}).status_code == 200
+    assert cl.patch(f"{E}/acme-group", json={"settings": {"shared_keys": ["GH_TOKEN"]}}).status_code == 200
+    raw = cl.get(f"{E}/acme-group/export").content
+    assert json.loads(zipfile.ZipFile(io.BytesIO(raw)).read("enterprise.json"))["settings"]["shared_keys"] == []
+    chart = json.dumps({"id": "keys", "name": "Keys", "positions": [{"id": "boss", "title": "Boss"}],
+                        "settings": {"shared_keys": ["STRIPE_KEY"]}})
+    r = cl.post(f"{E}/import", content=_zip({"enterprise.json": chart}))
+    assert r.status_code == 200, r.text
+    assert enterprises.load("keys")["settings"]["shared_keys"] == []
+    assert any("shared_keys" in s["reason"] for s in r.json()["skipped"])
