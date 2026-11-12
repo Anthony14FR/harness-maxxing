@@ -2203,20 +2203,21 @@ R('GET', '/api/enterprises/:e/tasks', ({ params }) => {
   const w = e.positions[1]?.id || lead
   const s = e.positions[2]?.id || w
   const t = now()
-  const sess = (p) => entAgent(e.positions.find((x) => x.id === p)?.agent)?.path || ''
+  const sess = (p) => `sess-${p}-0001`
   return { items: [
-    { id: 't_9f3c2a', title: 'Three articles on the spring kit', owner: w, requester: lead, status: 'doing', stage: '', created: t - 7200, updated: t - 600, last_move: 'Draft of article 2 saved', hops: 1, outside: false, run: { session: sess(w), running: true } },
-    { id: 't_4b11de', title: 'Keyword list for the spring campaign', owner: s, requester: lead, status: 'todo', stage: '', created: t - 5400, updated: t - 5400, last_move: 'Assigned, waiting in the inbox', hops: 1, outside: false, run: null },
-    { id: 't_77aa01', title: 'Review the landing page copy', owner: lead, requester: w, status: 'doing', stage: 'review_pending', created: t - 86400, updated: t - 3600, last_move: 'Handed in for review', hops: 2, outside: false, run: { session: sess(lead), running: false } },
-    { id: 't_c0de42', title: 'Reply to the partner asking for a quote', owner: s, requester: lead, status: 'doing', stage: 'blocked', created: t - 172800, updated: t - 40000, last_move: 'Blocked: needs the price list', hops: 3, outside: true, run: null },
-    { id: 't_0d0ne1', title: 'Weekly newsletter', owner: w, requester: lead, status: 'done', stage: '', created: t - 259200, updated: t - 100000, last_move: 'Delivered', hops: 1, outside: false, run: null },
+    { id: 't_9f3c2a', title: 'Three articles on the spring kit', owner: w, requester: lead, status: 'doing', stage: '', created: t - 7200, updated: t - 600, last_move: t - 600, hops: 1, outside: false, run: { session: sess(w), running: true } },
+    { id: 't_4b11de', title: 'Keyword list for the spring campaign', owner: s, requester: '', status: 'todo', stage: '', created: t - 5400, updated: t - 5400, last_move: t - 5400, hops: 1, outside: false, run: null },
+    { id: 't_77aa01', title: 'Review the landing page copy', owner: lead, requester: w, status: 'doing', stage: 'review_pending', created: t - 86400, updated: t - 3600, last_move: t - 3600, hops: 2, outside: false, run: { session: sess(lead), running: false } },
+    { id: 't_c0de42', title: '[outside content]', owner: s, requester: lead, status: 'doing', stage: 'blocked', created: t - 172800, updated: t - 40000, last_move: t - 40000, hops: 3, outside: true, run: null },
+    { id: 't_0d0ne1', title: 'Weekly newsletter', owner: w, requester: lead, status: 'done', stage: '', created: t - 259200, updated: t - 100000, last_move: t - 100000, hops: 1, outside: false, run: null },
   ] }
 })
 R('GET', '/api/enterprises/:e/now', ({ params }) => {
   const e = entGet(params.e)
   const v = entView(params.e)
   const t = now()
-  return { items: v.positions.filter((p) => p.occupant).map((p, i) => ({ position: p.id, agent: p.occupant.path, state: p.state, task: i === 1 ? 'Three articles on the spring kit' : '', since: t - 600 * (i + 1) })) }
+  const rows = v.positions.filter((p) => p.occupant && p.state !== 'idle')
+  return { items: rows.map((p, i) => ({ position: p.id, agent: p.occupant.path, state: i === 2 ? 'queued' : p.state, task: i === 0 ? null : { id: 't_9f3c2a', title: 'Three articles on the spring kit' }, since: t - 600 * (i + 1) })) }
 })
 R('GET', '/api/enterprises/:e/positions/:pos/inbox', ({ params }) => ({ items: params.pos === 'writer' ? [{ id: 'i1', kind: 'assignment', from: 'marketing-lead', text: 'Three articles on the spring kit', task: 't_9f3c2a', at: now() - 3600, outside: false }] : [] }))
 const entState = (e) => (e.live ||= {

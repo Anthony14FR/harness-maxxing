@@ -17,7 +17,7 @@ export function Tasks({ enterprise: e }: { enterprise: Enterprise }) {
   const lang = useLang()
   const { data, isLoading, error, refetch } = useEnterpriseTasks(e.id)
   const [who, setWho] = React.useState(ALL)
-  const title = (id: string) => (id === 'owner' ? t('ent.decisions.owner') : e.positions.find((p) => p.id === id)?.title || id)
+  const title = (id: string) => (id === 'owner' || id === '' ? t('ent.decisions.owner') : e.positions.find((p) => p.id === id)?.title || id)
   const people = [{ value: ALL, label: t('ent.tasks.everyone') }, ...e.positions.map((p) => ({ value: p.id, label: p.title }))]
   if (isLoading) return <Skeleton className="h-80 rounded-xl" />
   if (error || !data)
@@ -101,9 +101,8 @@ function Row({ x, title, lang }: { x: EnterpriseTask; title: (id: string) => str
         <Sensitive length={8}>{title(x.requester)}</Sensitive>
       </td>
       <td className="px-3 py-2.5 whitespace-nowrap text-muted-foreground">{fmtRelative(x.created, lang)}</td>
-      <td className="max-w-[16rem] px-3 py-2.5 text-muted-foreground">
-        <span className="line-clamp-2">{x.last_move}</span>
-        <span className="text-xs">{fmtRelative(x.updated, lang)}</span>
+      <td className="px-3 py-2.5 whitespace-nowrap text-muted-foreground">
+        {fmtRelative(x.last_move, lang)}
       </td>
       <td className="px-3 py-2.5 text-right tabular-nums">{x.hops}</td>
       <td className="px-4 py-2.5 text-right">
