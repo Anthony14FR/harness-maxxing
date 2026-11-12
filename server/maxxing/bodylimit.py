@@ -22,6 +22,7 @@ from .uploads import MB, _reply
 
 PUBLIC_MAX = 64 * 1024
 DEFAULT_MAX = 1 * MB
+IMPORT_MAX = 50 * MB                                            # an enterprise zip (enterprise_io.MAX_ZIP is this)
 # (method, path pattern, cap) - signed-in requests only; the first match wins.
 ROUTES: tuple[tuple[str, re.Pattern[str], int], ...] = (
     ("PUT", re.compile(r"^/api/files/write$"), 16 * MB),      # the editor's text (<= 2 MB read), JSON-escaped
@@ -29,6 +30,7 @@ ROUTES: tuple[tuple[str, re.Pattern[str], int], ...] = (
     ("POST", re.compile(r"^/api/sessions/[^/]+/(messages|steer|ask)$"), 8 * MB),
     ("*", re.compile(r"^/api/ext/"), 5 * MB),                 # extension routes (api/extensions.py MAX_BODY)
     ("POST", re.compile(r"^/api/settings/feedback$"), 2 * MB),  # one screenshot <= 1 MB (feedback.MAX_IMAGE), base64
+    ("POST", re.compile(r"^/api/enterprises/import$"), IMPORT_MAX),   # the raw zip of an enterprise export
 )
 _MUTATING = ("POST", "PUT", "PATCH", "DELETE")
 
@@ -38,7 +40,7 @@ def _public(path: str) -> bool:
     # /api/team-peer/* (other Harness servers) checks its own signatures
     # /api/browser/mcp/<session> (loopback + the turn's token: api/browser.py)
     # /api/public/desk/<token> (the enterprise front desk's chat link: the token is the permission, 64 kB cap)
-    return path.startswith(("/api/auth/", "/api/hooks/", "/api/team-peer/", "/api/browser/mcp/", "/api/public/")) or \
+    return path.startswith(("/api/auth/", "/api/hooks/", "/api/team-peer/", "/api/browser/mcp/", "/api/public/desk/")) or \
         path in ("/api/pc/pair", "/api/pc/mcp")
 
 
