@@ -489,7 +489,9 @@ class Runner:
             "folder": str(approvals_dir()), "session": self.sid,
             "agent_path": str(meta.get("path") or "") if agent else "",
             "timeout": _approval_timeout(agent.get("approval_timeout_s") or cfg.get("approval_timeout_s"))}
-        mcp_plan = mcp_auto.plan(self.sid, cfg, meta, cwd, item.get("text") or "")   # MCP servers this turn needs
+        no_mcp = bool(agent.get("no_mcp"))              # a front desk turn: no MCP server at all, whatever is configured
+        mcp_plan = (mcp_auto.Plan(["--strict-mcp-config", "--mcp-config", '{"mcpServers":{}}'], "", []) if no_mcp
+                    else mcp_auto.plan(self.sid, cfg, meta, cwd, item.get("text") or ""))   # MCP servers this turn needs
         copy = _copy_note(meta, cwd)
         web = browser_args(self.sid, str(meta.get("path") or ""), agent) if not plan else []
         memory = spawn.upper_memory(cwd, cfg.get("workspace") or "")   # the levels above: never loaded otherwise
@@ -510,7 +512,7 @@ class Runner:
             b += ["--model", model] if model else []
             b += ["--effort", effort] if effort in spawn.EFFORTS else []
             b += agent.get("args") or []
-            return b + pcbridge.mcp_config_args() + mcp.args + approval + web
+            return b + ([] if no_mcp else pcbridge.mcp_config_args()) + mcp.args + approval + ([] if no_mcp else web)
         base = argv(mcp_plan)
         env = spawn.claude_env(meta.get("env") or {}, mode, agent.get("keys") if agent else None)
         env["MAXXING_SESSION"] = self.sid               # `maxxing mcp load` run by the turn finds its session
