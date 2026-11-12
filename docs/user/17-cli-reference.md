@@ -242,6 +242,9 @@ OAuth sign-ins (state "To connect") are done in Settings -> MCP -> **Connect**. 
 | `maxxing enterprise done TASK TEXT` / `block TASK TEXT` | from a position: hand in a task / report a blocker |
 | `maxxing enterprise escalate TEXT [--task T]` / `answer ID TEXT` | from a position: ask one level up / answer an escalation of a report |
 | `maxxing enterprise request CATEGORY TEXT [--amount N] [--position P --job TEXT\|--agent A]` / `decide ID allow\|deny [REASON]` | from a position: ask for something / decide a request of the team |
+| `maxxing enterprise request hire WHY --title T --department D --reports-to P --job TEXT --topic projects/<p>/topics/<t> --name N --role TEXT [--model M] [--effort low\|medium\|high\|xhigh\|max]` | from a position: ask the owner to create a position and hire its agent (done on Accept; `--title` and `--topic` required) |
+| `maxxing enterprise review TASK approve\|changes [NOTES]` | from the reviewer position (setting `review_by`): approve a hand-in or send it back (notes required for `changes`) |
+| `maxxing enterprise meeting start TOPIC --with P1,P2 [--hours H]` / `reply ID TEXT` | from a lead (or the owner): ask positions of its branch for their view (the top may invite any; closes after 4 h by default); an invited position answers once, the organizer gets the minutes |
 | `maxxing enterprise objective set ID VALUE` | from a position: the value of an objective it owns |
 | `maxxing enterprise route DEPARTMENT TEXT` | from the front desk position: pass a request on to a department (a task marked as coming from outside) |
 | `maxxing enterprise worker start TEXT [--for TASK]` / `list` / `stop ID` | from a position: start a temporary worker (needs workers set to visible) / list them / stop one (`stop`: the owner) |
@@ -249,7 +252,7 @@ OAuth sign-ins (state "To connect") are done in Settings -> MCP -> **Connect**. 
 
 `request` takes `--position` with `--job` (change a job description) or `--agent` (seat an agent on a vacant position) for a position of the caller's own team. Position ids `owner`, `server`, `policy`, `visitor`, `free`, `esc` and `none` are reserved. A department overrides only communication, allow, workers, autonomy, escalation timeout and spending threshold. The front desk's agent needs no key, domain, writable folder or trust in outside events, and a daily budget and hourly run limit, before the desk goes live. Export leaves out grants, agent paths, key and domain lists, worker templates, trust along the chain and the public desk link.
 
-`maxxing enterprise` commands from `assign` down to `worker` act as the position of the calling agent; the owner adds `--as POSITION`
+`maxxing enterprise` commands from `assign` down to `worker` (and `review`, `meeting`) act as the position of the calling agent; the owner adds `--as POSITION`
 (and `--enterprise SLUG` when there are several). The structure commands (create, link, position, settings, grant, ...) are
 refused in agent turns.
 

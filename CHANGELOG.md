@@ -219,6 +219,21 @@ New:
   - **Reports**: daily digest, weekly and monthly reports, and an Overview of cost, late work and what waits for you.
   - **Export and import**: download an enterprise as a zip from its Settings tab and import it as a new one, from
     there or from the Enterprises page.
+  - **The top position decides for me**: a setting that lets the top of the chart decide what would reach you, so you
+    can run an enterprise by talking only to its CEO. Outside content, hires, keys, domains, sandbox and folders,
+    prices and terms and the front desk still come to you.
+  - **Review before hand-in**: name a reviewer position; a hand-in goes to it first, which approves it or asks for
+    changes.
+  - **Meetings**: a lead (or you) asks several positions for their view and gets the minutes.
+  - **Hiring**: a position can ask to hire (you accept, the agent is created); the Hire dialog sets the agent's name,
+    role, model and effort; seating an agent of a project not linked yet offers to link it.
+  - **Shared keys** given to every occupant, and **positions that run outside code**, which need a protected agent
+    with no key.
+  - **Budget warnings** when agents' budgets exceed a department's ceiling, with **Split the ceiling**. With a Claude
+    subscription the amounts are estimates at API prices; the real limit is your quota.
+  - A lead delegates to its direct reports in any department without a request. Notifications and Telegram cards
+    follow the server language. The position panel shows how much of the 3,000-character note is used.
+- **Agents: an effort level.** Each agent has an Effort setting (low to max) next to its model, passed to Claude Code.
 - **Voice: choose the microphone.** Settings -> Voice has a **Microphone** line: pick the microphone that records
   on this device (headset, USB microphone, the built-in one) instead of the one the browser picks. The choice stays
   in this browser; if that microphone is unplugged, the default one records and the choice comes back with it.

@@ -58,8 +58,11 @@ full or its agent is off; the card says which).
 - **Add position**: a box exists on its own; an agent can be seated now or later. Choose its title, its lead
   (**Reports to**, or **The top of the chart**), its department and its **job description**.
 - **Vacant** positions show **Hire**: it creates a **new agent** in a topic of a linked project (you choose the topic)
-  and seats it. The agent sets itself up in its conversation from the job description, like any new agent. Or
-  **Seat an agent** that already exists in a linked project. An agent holds at most one position.
+  and seats it. The agent sets itself up in its conversation from the job description, like any new agent. The
+  **Hire** dialog lets you choose the agent's **name**, its **role** (the text of its `CLAUDE.md`, by default the
+  title and the job description), its **model** and its **effort**. Or **Seat an agent** that already exists. If it
+  lives in a project that is not linked yet, you are offered to **link the project and seat** it in one step. An
+  agent holds at most one position.
 - **Vacate** empties a position without touching the agent. Deleting an agent vacates its position; restoring it from
   the Trash does not re-seat it by itself.
 - **Change lead**, or **drag** a card onto another one (computer). The chart refuses a cycle, too many levels or too
@@ -80,7 +83,8 @@ At every turn, an occupant reads, from general to specific:
 3. its own **job description**,
 
 then its own role and memory as always. These three are added to the turn by the server and cut at **3,000
-characters in total** (the editor shows the count): keep them short. Changing the mission once changes it for every
+characters in total** (the editor shows the count; the cut falls at the end, so the job description is what gets
+truncated first): keep them short. A position's panel shows the size of its note and warns when it is cut. Changing the mission once changes it for every
 occupant at its next turn. Nothing is written into the agent's folder: unlinking leaves no trace in the agent.
 
 The **company profile** (products and prices, hours, terms, contact, FAQ) is **not** given to every turn. Agents read
@@ -101,10 +105,31 @@ Deliveries are not one run per message: they wait in the position's **inbox**, a
 everything waiting, after its usual grouping delay. A delivery that cannot start (agent off, budget or runs per hour
 reached, vacant position) **waits** instead of being lost. These runs count in the agent's budget and limits.
 
+Delegation to a direct report never needs a request, whatever the department of the report. This is fixed
+behaviour, not a setting.
+
 **Escalation timeout** (setting, 4 hours by default, 1 to 72): a question nobody answers climbs one level, up to you,
 where it becomes a notification you can answer. A vacant, switched-off or out-of-budget lead is skipped at once. An
 escalation always reaches you, even from a silent agent. The hand-overs on one task are limited (6 by default); past
 that, it goes to you.
+
+## Review before hand-in
+
+Set **Reviewer** in the settings (a position) and a contributor's hand-in no longer goes straight to the requester: the
+task goes to the reviewer first (stage **Waiting for review**). The reviewer runs
+`maxxing enterprise review TASK approve` (stage **Reviewed**, then the usual hand-in to the requester, mentioning the
+review) or `maxxing enterprise review TASK changes "notes"` (stage **Changes asked**; the notes go back to the task's
+owner, who goes on working). Only the reviewer can use the command, and a task owned by the reviewer itself is not
+reviewed. Leave the setting empty for no review step.
+
+## Meetings
+
+A **lead** (or you) can call an **enterprise meeting** to get several positions' views at once, across projects:
+`maxxing enterprise meeting start "topic" --with writer,social [--hours 6]`. A lead invites positions **in its own
+branch** of the chart; the top position may invite any position; nobody invites itself. Each invited position receives
+the topic and answers once with `maxxing enterprise meeting reply ID "text"` (it sees the replies so far). The meeting
+closes when everyone has answered or at the **deadline** (4 hours by default, up to 168), and the organizer receives
+the **minutes**: all the replies. The meetings are listed with their replies and minutes, read-only in the app.
 
 ## Requests and approvals
 
@@ -131,6 +156,12 @@ names its target (`--position`, with `--job` or `--agent`), which must be in the
 Some rows are enforced by the server; the spending rows are **declared** by the agent and the last row relies on the
 agent's role and its usual approvals.
 
+**Hire requests**: a position can ask for a **new position and its agent** with
+`maxxing enterprise request hire "why" --title T --department D --reports-to P --job TEXT --topic projects/<p>/topics/<t>
+--name N --role TEXT [--model M] [--effort E]` (`--title` and `--topic` are required). It is always yours to decide: **on
+your Accept**, the position is created under the chosen lead, the agent is created in that topic and seated, and the
+requester is told the outcome (or why it failed).
+
 A request that reaches you is an **Allow / Deny** card in the **Overview** ("Waiting for you"), in the notifications
 and on Telegram. A lead decides in its next run. If nobody answers in time, the request climbs one level, like an
 escalation. Everything is written in the **Decisions** tab (the decision log, filterable by kind and position).
@@ -144,6 +175,12 @@ Rules no setting can change:
 3. Nobody decides their own request, and a lead only decides for its own team.
 4. **Allowing a request grants nothing.** If it needs a key, a domain or a folder, you still get the usual card of
    the agent.
+
+**The top position decides for me** (setting, off by default): the top position of the chart decides what would
+otherwise reach you, including its own requests (the log says so), so you can **run the enterprise by talking only to
+the CEO**. Grants are not needed in that mode. Always staying yours: requests born from **outside content**, **hires
+and removals** (`hire`, `hire_remove`), changes of **keys, domains, sandbox and folders**, **prices and terms**, and
+**putting the front desk live**. When the top is vacant or off, the request goes to you as usual.
 
 **Delegated approval**: you can let a lead decide a category up to a ceiling until a date ("until Friday, the head of
 marketing decides spending up to 50 USD"), 30 days at most, revocable. It never covers the rows where you always
@@ -167,6 +204,21 @@ among its reports, if lower): the run is **cut** there, so siblings run side by 
 held, a run waits and starts when room is back. Give an agent a budget of its own to lift that per-run limit. A key or a domain that an agent holds beyond a narrowed list is
 flagged in the chart; the server never edits an agent itself, you remove it. Widening an agent beyond its envelope is
 refused.
+
+**Budget warnings**: when the agents' own daily budgets add up to more than the ceiling of their department (or of the
+enterprise), the settings show a warning with the sum and the ceiling. **Split the ceiling** gives each agent of a
+department an equal share (rounded down to 0.05 USD a day). **With a Claude subscription**, the amounts are
+**estimates at API prices**: the real limit is your subscription's quota, not these dollars.
+
+**Shared keys** (settings): vault keys given to **every occupant** of the enterprise on top of its own. They are still
+filtered by the department and enterprise key envelopes (they never widen one), and never reach a position that runs
+outside code, nor a front desk turn.
+
+**Positions that run outside code**: switch **Runs code from outside** on a position (for instance one that builds
+the pull requests of strangers). Its agent must be **protected (sandboxed) and hold no key**: seating an unfit agent is
+refused with the reasons, and deliveries to an occupant that became unfit **wait**. Hire creates a protected agent
+without key for such a position. The settings warn when this server cannot run protected agents (sandbox not
+available).
 
 **Departments** (settings): a branch of the chart with its own envelope and notes, and overrides of some settings
 (shown as *Same as the enterprise* when not overridden): communication, who may be written to, workers, autonomy,
@@ -210,6 +262,8 @@ With [Telegram](telegram) linked, each enterprise gets **its own thread** (named
 digest, the cards that need you, and the answers you give there. Without topics, they arrive in the main chat with the
 enterprise's emoji in front. The **Notifications** settings apply: set the source *Enterprises* to off or silent and the
 digests and notes stay in the app (or arrive silently); a card that waits for your answer stays loud, like an approval.
+
+Notifications, Telegram cards and the texts of decisions follow the **language of the server** (English or French).
 
 ## Workers
 
@@ -292,10 +346,18 @@ commands are **yours**: an agent never changes the chart, its settings or its gr
 | Who | Commands |
 |---|---|
 | You | `create`, `link`, `unlink`, `position add\|move\|seat\|vacate\|remove`, `settings`, `grant`, `report`, `decisions`, `export`, `import` |
-| An agent, as its own position | `show`, `profile`, `assign`, `done`, `block`, `escalate`, `answer`, `request`, `decide`, `objective set`, `worker`, and `route` (front desk) |
+| An agent, as its own position | `show`, `profile`, `assign`, `done`, `block`, `escalate`, `answer`, `request` (with `request hire`), `decide`, `review`, `meeting start\|reply`, `objective set`, `worker`, and `route` (front desk) |
 
 You can run the agent commands too, with `--as POSITION`, to test a flow. The `maxxing-enterprises` skill lets Claude
 set a chart up from a conversation.
+
+## Tips
+
+- If agents hold a broad GitHub key, **protect `main` with a GitHub ruleset** (pull request required, no direct push)
+  so that nothing reaches it without a merge you control.
+- For real separation, give the agents **a dedicated GitHub account** instead of yours.
+- To deploy after a merge when your Dokploy panel is private, add a **watcher job** that checks the repository and
+  triggers the deployment, since a webhook cannot reach the panel.
 
 ## Safety in short
 

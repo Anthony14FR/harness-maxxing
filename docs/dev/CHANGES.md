@@ -279,6 +279,23 @@ shown in the product. Newest first, same version headings as `CHANGELOG.md`.
   (**the version's upgrade note must add it to existing workspaces**). Tests: `test_team.py::test_cli_send_*`,
   `test_a_write_from_another_process_refreshes_the_pages`.
 
+- Enterprises, improvements. Settings (`enterprises.SETTINGS`, validated): `top_decides`, `shared_keys`, `review_by`.
+  `enterprise_policy._owner_or_top` sends to the top position what `_route` would send to the owner, except
+  `TOP_NEVER` (`hire`, `hire_remove`, `profile_terms`, `desk_live`), outside-started requests and the safety requests;
+  the top may decide its own requests; a vacant or off top falls back to the owner. New category `hire` (payload
+  `title, department, reports_to, job, topic, name, role, model, effort`): `_hire` on Accept calls `add_position` then
+  `enterprises.hire_custom` and tells the requester. CLI: `request hire`, `review`, `meeting start|reply` (`TURN_CMDS`).
+  Flow: `review_by` puts a contributor's `done` in stage `review_pending` (kind `review`), `review()` sets `reviewed`
+  or `changes`; meetings in `meetings.json` (`start_meeting`, `reply_meeting`, deadline in the tick, default 4 h
+  `MEETING_H`, 168 h max; a lead invites its subtree, the top anyone), kinds `meeting` and `meeting_minutes`; routes
+  `GET /{e}/meetings[/{id}]`. A lead delegates to a direct report in any department without a request. Positions:
+  `untrusted_code` flag (PATCH), `untrusted_unfit()` (`not_sandboxed`, `holds_keys`), seat refused with `400
+  untrusted_unfit` (`reasons`), deliveries wait with that reason; `note_chars` / `note_cut`; payload keys
+  `sandbox_available`, `budget_warnings`; `POST /{e}/departments/{d}/split-budget` (equal share, step 0.05, through
+  `agents.update`); seat `409 project_not_linked` or body `link_project`; hire body `name, role, model, effort`.
+  `agents.run_settings` adds `enterprises.shared_keys_for(path)` (inside the envelopes, none for an `untrusted_code`
+  position, none in a desk turn). Agents: `effort` (`""|low|medium|high|xhigh|max`, `bad_effort`), `--effort` passed
+  to `claude`. Notifications, Telegram cards and decision texts use `config` `language` (en/fr tables per module).
 - Enterprises (an org chart of agents above projects; off by default, config `enterprises_page`, needs
   `agents_page`, no migration). Modules: `enterprises.py` (files, lookups, structure, `rev`, lock `enterprises`),
   `enterprise_flow.py` (inboxes, deliveries, delegated tasks, escalations, the tick loop), `enterprise_policy.py`
