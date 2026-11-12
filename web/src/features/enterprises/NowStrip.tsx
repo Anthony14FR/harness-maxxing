@@ -21,7 +21,8 @@ export function NowStrip({ enterprise: e }: { enterprise: Enterprise }) {
       ) : (
         <ul className="grid gap-1.5 sm:grid-cols-2 lg:grid-cols-3">
           {data.map((x) => {
-            const tone = STATE_TONE[x.state] || STATE_TONE.idle
+            const tone = STATE_TONE[(x.state === 'queued' ? 'waiting' : x.state) as keyof typeof STATE_TONE] || STATE_TONE.idle
+            const task = typeof x.task === 'string' ? x.task : x.task?.title || ''
             const body = (
               <>
                 <StatusDot tone={tone.tone} pulse={tone.pulse} label={t(tone.label)} className="mt-1.5 size-2 shrink-0" />
@@ -29,7 +30,7 @@ export function NowStrip({ enterprise: e }: { enterprise: Enterprise }) {
                   <span className="truncate font-medium">
                     <Sensitive length={8}>{title(x.position)}</Sensitive>
                   </span>
-                  <span className="line-clamp-2 text-muted-foreground">{x.task ? <Sensitive length={20}>{x.task}</Sensitive> : t(tone.label)}</span>
+                  <span className="line-clamp-2 text-muted-foreground">{task ? <Sensitive length={20}>{task}</Sensitive> : t(tone.label)}</span>
                   <span className="text-xs text-muted-foreground">{fmtRelative(x.since, lang)}</span>
                 </span>
               </>
