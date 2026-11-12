@@ -1034,3 +1034,68 @@ def test_deliver_with_a_ref_never_piles_up_copies(ent):
     a = flow.deliver(S, "writer", "note", "one", sender="ceo", ref="x:1")
     b = flow.deliver(S, "writer", "note", "two", sender="ceo", ref="x:1")
     assert a["id"] == b["id"] and len(_inbox("writer")) == 1
+
+
+# ---- failed runs are retried, resume ---------------------------------------------------------------------
+def _raw(pos):
+    return flow._read(flow._inbox_file(S, pos))
+
+
+def _attempt(pos, n):
+    wait_for(lambda: [i.get("attempt") for i in _raw(pos)] == [n] and flow.seen(S, pos) == [])
+    return _raw(pos)[0]
+
+
+def test_a_failed_run_puts_its_deliveries_back_then_gives_up(ent):
+    it = flow.deliver(S, "writer", "assign", "FAIL write the article", sender="ceo", task="t_9")
+    n = len(_calls())
+    t0 = time.time()
+    flow.tick(t0 + 1)
+    back = _attempt("writer", 1)
+    assert back["id"] == it["id"] and "run" not in back and back["not_before"] >= t0 + 590
+    assert any("back in its inbox" in d["text"] for d in enterprises.decisions(S)[0])
+    flow.tick(time.time() + 60)                                     # not due yet
+    time.sleep(0.3)
+    assert len(_calls()) == n + 1
+    for attempt, jump in ((2, 700), (3, 2000)):
+        flow.tick(time.time() + jump)
+        assert _attempt("writer", attempt)["id"] == it["id"]
+    assert flow.escalations(S) == []
+    flow.tick(time.time() + 8000)
+    wait_for(lambda: _inbox("writer") == [] and flow.escalations(S))
+    (e,) = flow.escalations(S, open_only=True)
+    assert e["position"] == "writer" and e["to"] == "ceo" and "failed 4 times" in e["text"]
+    assert flow.seen(S, "writer") == []
+
+
+def test_a_successful_run_requeues_nothing(ent):
+    flow.deliver(S, "writer", "note", "NOTOOL fine", sender="ceo")
+    flow.tick(time.time() + 1)
+    wait_for(lambda: len(flow.seen(S, "writer")) == 1)
+    time.sleep(0.5)
+    assert _inbox("writer") == [] and len(flow.seen(S, "writer")) == 1
+
+
+def test_run_ended_ignores_a_run_that_took_no_delivery(ent):
+    flow.run_ended({"id": "s_none", "path": AG["writer"]}, False, "boom")
+    assert _inbox("writer") == []
+
+
+def test_resume_route_delivers_a_trusted_owner_item_once(ent):
+    flow.deliver(S, "writer", "assign", "x", sender="ceo")
+    items = _inbox("writer")
+    r = ent.post(f"{E}/{S}/positions/writer/resume")
+    assert r.status_code == 200 and r.json()["ok"]
+    assert ent.post(f"{E}/{S}/positions/writer/resume").status_code == 200
+    got = [i for i in _inbox("writer") if i["kind"] == "followup"]
+    assert len(got) == 1 and got[0]["from"] == "" and got[0]["text"] == flow.RESUME_TEXT and not got[0]["outside"]
+    assert len(items) == 1
+    assert ent.post(f"{E}/{S}/positions/nobody/resume").status_code == 404
+
+
+def test_resume_makes_waiting_retries_due(ent):
+    flow.deliver(S, "writer", "assign", "FAIL again", sender="ceo")
+    flow.tick(time.time() + 1)
+    _attempt("writer", 1)
+    assert ent.post(f"{E}/{S}/positions/writer/resume").status_code == 200
+    assert all("not_before" not in i for i in _raw("writer"))

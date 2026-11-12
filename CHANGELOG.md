@@ -214,6 +214,9 @@ New:
   instead of one message per agent. A shared daily budget, three autonomy profiles that decide what a lead may approve
   alone, and a Telegram thread per enterprise. Off by default: Settings -> Features -> Enterprises (needs Agents).
   [Show me](#show:enterprises)
+  - **Failed runs retry**: when a run is cut or fails, its deliveries come back to the position's inbox and are tried
+    again later; after three tries the lead (or you) is told. A **Resume** button and `maxxing enterprise resume`
+    tell a position to go through its open tasks again.
   - **Front desk**: a labelled AI assistant on a public chat link answers customers and passes requests to the right
     team.
   - **Reports**: daily digest, weekly and monthly reports, and an Overview of cost, late work and what waits for you.

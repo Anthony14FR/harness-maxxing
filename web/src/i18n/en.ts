@@ -4869,6 +4869,8 @@ export const en = {
   "ent.hire.templateHint": "The settings of the new agent (tools, protection, budget). Its role stays the job description.",
   "ent.hire.noTemplate": "No template",
   "ent.panel.work": "Inbox & tasks",
+  "ent.resume": "Resume",
+  "ent.resume.done": "Resume sent: the position goes through its open tasks.",
   "ent.position.tasks": "Delegated tasks",
   "ent.position.tasksEmpty": "No open task for this position.",
   "ent.position.taskTodo": "To do",

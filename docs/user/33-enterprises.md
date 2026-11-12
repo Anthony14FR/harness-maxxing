@@ -103,7 +103,10 @@ price or a term that is not in it.
 
 Deliveries are not one run per message: they wait in the position's **inbox**, and its occupant runs **once** for
 everything waiting, after its usual grouping delay. A delivery that cannot start (agent off, budget or runs per hour
-reached, vacant position) **waits** instead of being lost. These runs count in the agent's budget and limits.
+reached, vacant position) **waits** instead of being lost. These runs count in the agent's budget and limits. When a
+run fails or is cut (timeout, approval nobody answered), what it had taken goes back to the inbox and is tried again
+after 10 minutes, 30 minutes and 2 hours; then the lead (or you) is told. **Resume** (position panel, a failed card, or
+`maxxing enterprise resume SLUG POSITION`) tells a position to go through its open tasks right away.
 
 **Follow-ups**: nobody has to watch for a late task. In total autonomy, when a delegated task has not moved for
 **2 hours**, the position that asked for it is woken with the list of those tasks, to ask the owner of each task,

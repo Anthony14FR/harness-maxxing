@@ -16,7 +16,7 @@ import { useCompact } from '@/stores/media'
 import { AddPositionDialog } from './dialogs'
 import { OrgList } from './OrgList'
 import { PositionSheet } from './PositionSheet'
-import { ProjectChip, STATE_TONE, chartOrder, chartRoots, stateText, subtreeIds, useProjects, useSavePosition, type ProjectInfo } from './parts'
+import { ProjectChip, ResumeButton, STATE_TONE, chartOrder, chartRoots, stateText, subtreeIds, useProjects, useSavePosition, type ProjectInfo } from './parts'
 
 /** Minimum panel width in rem, per zoom step; the middle one is "fit to screen" (the panels share the width). */
 const ZOOMS = [15, 19, 26, 34]
@@ -393,7 +393,12 @@ export function OrgChart({ enterprise: e }: { enterprise: Enterprise }) {
                 warned={warned.has(d)}
                 folded={closed.has(d)}
                 onToggle={() => toggle(d)}
-                card={(p) => <PositionCard {...cardProps(p)} />}
+                card={(p) => (
+                  <div className="grid gap-1">
+                    <PositionCard {...cardProps(p)} />
+                    <ResumeButton enterprise={e.id} position={p} />
+                  </div>
+                )}
               />
             ))}
           </div>

@@ -279,6 +279,14 @@ shown in the product. Newest first, same version headings as `CHANGELOG.md`.
   (**the version's upgrade note must add it to existing workspaces**). Tests: `test_team.py::test_cli_send_*`,
   `test_a_write_from_another_process_refreshes_the_pages`.
 
+- Enterprises, failed runs and resume. `agents.on_turn_end` calls `enterprise_flow.run_ended(session, ok, text)` for a
+  run that ended without success: the items of `<pos>.seen.jsonl` whose `run` is that session go back to the inbox (same
+  ids, no duplicate) with `attempt` and `not_before` (`RETRY_WAITS_S` 10 min, 30 min, 2 h; `_flush` skips items not yet
+  due); a 4th failure gives up and opens an escalation (lead, else owner) with the last error. Each requeue is a `note`
+  in the decision log. `POST /{e}/positions/{pos}/resume` and `maxxing enterprise resume SLUG POS|--all-failed` call
+  `enterprise_flow.resume_position` (item kind `followup`, ref `resume`, clears `not_before`); an agent turn is refused
+  unless it is the top position in total autonomy acting on its subtree. Web: Resume button in the position panel and
+  on failed cards.
 - Enterprises, total autonomy and follow-ups. Setting `zero_intervention` (bool, false, enterprise-wide, no department
   override; `enterprises.SETTINGS`): `enterprises.setting` returns `ZERO_FORCED` (`autonomy` autonomous, `trust_chain`
   and `top_decides` true) while it is on, stored values untouched; `GET /{e}` adds `effective`; saving it with top

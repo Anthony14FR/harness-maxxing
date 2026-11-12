@@ -42,6 +42,9 @@ RENEW_MAX = 3                                       # renewals of an item stoppe
 REPORT_MAX_PER_H = 6                                # report-to-owner messages per hour
 MEETING_H = 4.0                                     # default hours before a meeting closes with the replies it has
 MEETING_KEEP = 100
+RESUME_TEXT = ("Resume your open tasks: run `maxxing enterprise tasks --mine`, then finish, hand in, block or "
+               "escalate each one.")
+RETRY_WAITS_S = (600.0, 1800.0, 7200.0)             # waits before the 1st, 2nd and 3rd re-delivery of what a failed run took
 TEXTS = {                                           # owner-facing notification texts (language setting, English fallback)
     "esc_title": {"en": "{name}: {who} needs an answer", "fr": "{name} : {who} attend une réponse"},
     "handin_title": {"en": "Hand-in to review", "fr": "Livrable à relire"},
@@ -475,6 +478,9 @@ def _flush(slug: str, pos: str, now: float) -> str:
         path = p.get("agent")
         if not path or not agents.exists(path):
             return _wait(slug, pos, now, "vacant")
+        items = [i for i in items if float(i.get("not_before") or 0) <= now]       # a requeued item waits for its retry time
+        if not items:
+            return "pending"
         if now < float(items[0].get("at") or 0) + _debounce(path):
             return "pending"
         why = _why_not(path) or _unfit(slug, pos, p)
@@ -508,6 +514,70 @@ def _flush(slug: str, pos: str, now: float) -> str:
                     session=run)
     enterprises.invalidate(slug)
     return "started"
+
+
+def resume_position(slug: str, pos: str) -> dict:
+    """Wake a position up: a trusted owner item tells it to go through its open tasks (waiting retries start now)."""
+    if not enterprises.feature_on():
+        raise EnterpriseError(404, "feature_off", "Enterprises are off (Settings -> Features, needs Agents)")
+    _need(slug, pos)
+    with enterprises._lock:
+        f = _inbox_file(slug, pos)
+        items = _read(f)
+        if any("not_before" in i for i in items):
+            _write(f, [{k: v for k, v in i.items() if k != "not_before"} for i in items])
+    item = deliver(slug, pos, "followup", RESUME_TEXT, ref="resume")
+    enterprises.log(slug, "note", f"Owner resumes {pos}", by="owner", position=pos)
+    return item
+
+
+def failed_positions(slug: str) -> list[str]:
+    """The positions whose last run failed."""
+    return [p["id"] for p in enterprises.get(slug)["positions"] if p.get("state") == "failed"]
+
+
+def run_ended(session: dict, ok: bool, reason: str = "") -> None:
+    """A run of an occupant ended: when it failed and took enterprise deliveries, they go back to the inbox (same ids)
+    after a growing wait; past RETRY_WAITS_S the position's lead (else the owner) is told with the reason."""
+    if ok or not enterprises.feature_on():
+        return
+    sid = session.get("id") or ""
+    seat = enterprises.seat_of(session.get("path") or "")
+    if not sid or not seat:
+        return
+    slug, pos = seat
+    now = _now()
+    with enterprises._lock:
+        f2 = _inbox_dir(slug) / f"{pos}.seen.jsonl"
+        seen_all = _read(f2)
+        taken = [i for i in seen_all if i.get("run") == sid]
+        if not taken:
+            return
+        _write(f2, [i for i in seen_all if i.get("run") != sid])
+        attempt = max(int(i.get("attempt") or 0) for i in taken) + 1
+        if attempt <= len(RETRY_WAITS_S):
+            f1 = _inbox_file(slug, pos)
+            have = _read(f1)
+            ids = {i.get("id") for i in have}
+            back = [{**{k: v for k, v in i.items() if k != "run"}, "attempt": attempt,
+                     "not_before": now + RETRY_WAITS_S[attempt - 1]} for i in taken if i.get("id") not in ids]
+            _write(f1, (have + back)[-INBOX_MAX:])
+    why = (reason or "the run failed").strip()[:300]
+    if attempt <= len(RETRY_WAITS_S):
+        enterprises.log(slug, "note", f"Run of {pos} failed ({why}): {len(taken)} deliveries back in its inbox, "
+                        f"attempt {attempt}/{len(RETRY_WAITS_S)} in {int(RETRY_WAITS_S[attempt - 1] // 60)} min",
+                        by="server", position=pos, session=sid)
+    else:
+        enterprises.log(slug, "note", f"Run of {pos} failed {attempt} times ({why}): its deliveries are given up",
+                        by="server", position=pos, session=sid)
+        try:
+            _new_esc(slug, pos, f"The deliveries of {_label(slug, pos)} failed {attempt} times in a row and are not "
+                     f"retried any more. Last error: {why}. Look at its tasks and use `maxxing enterprise resume` "
+                     f"when it can work again.", next((i.get("task") or "" for i in taken), ""),
+                     any(bool(i.get("outside")) for i in taken), sid, now, to_owner=not enterprises.ancestors(slug, pos))
+        except Exception:  # noqa: BLE001 - the failure is logged above; a failed warning never breaks the run's end
+            logger.exception("give-up notice %s/%s", slug, pos)
+    enterprises.invalidate(slug)
 
 
 # ---- escalations ---------------------------------------------------------------------------------------------

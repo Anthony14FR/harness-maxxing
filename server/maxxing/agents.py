@@ -2600,6 +2600,12 @@ def on_turn_end(session: dict, result: dict | None) -> None:
             gateway.notify_agent(path, text, ok=ok, thread_msg=msg["id"], silent=a["silent"])
         except Exception:
             log.exception("agent Telegram message failed")
+    if not ok:
+        try:                            # deliveries an enterprise run took go back to the inbox (retried later)
+            from . import enterprise_flow
+            enterprise_flow.run_ended(session, False, text)
+        except Exception:  # noqa: BLE001
+            log.exception("agent %s: enterprise requeue", path)
     try:                                # its hold is released: the owner's messages that waited for it start
         with _lock:
             _drain_owner(path)

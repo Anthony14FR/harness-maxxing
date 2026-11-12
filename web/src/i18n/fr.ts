@@ -4851,6 +4851,8 @@ export const fr: Record<keyof typeof en, string> = {
   "ent.hire.templateHint": "Les réglages du nouvel agent (outils, protection, budget). Son rôle reste la fiche de poste.",
   "ent.hire.noTemplate": "Aucun modèle",
   "ent.panel.work": "Boîte et tâches",
+  "ent.resume": "Reprendre",
+  "ent.resume.done": "Reprise envoyée : le poste repasse sur ses tâches ouvertes.",
   "ent.position.tasks": "Tâches déléguées",
   "ent.position.tasksEmpty": "Aucune tâche ouverte pour ce poste.",
   "ent.position.taskTodo": "À faire",

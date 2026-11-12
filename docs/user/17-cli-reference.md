@@ -236,6 +236,7 @@ OAuth sign-ins (state "To connect") are done in Settings -> MCP -> **Connect**. 
 | `maxxing enterprise position move SLUG ID --reports-to P` / `seat SLUG ID --agent A` / `vacate SLUG ID` / `remove SLUG ID [--reparent-to P]` | change the chart (`owner` = the top) |
 | `maxxing enterprise settings SLUG KEY=VALUE ... [--department D]` | change a setting (`digest.enabled=true`), a department's override, `name` or `notes`, or the name, emoji, top, `envelope.*` |
 | `maxxing enterprise grant SLUG POSITION --category C --ceiling N --until DATE` / `--revoke ID` | let a lead decide a category up to a ceiling until a date (30 days at most) |
+| `maxxing enterprise resume SLUG POSITION` / `--all-failed` | tell a position (or every failed one) to go through its open tasks again (the owner's; an agent only as the top position in total autonomy, for its subtree) |
 | `maxxing enterprise report SLUG [--daily\|--weekly\|--monthly] [--now] [--json]` | print the last report; `--now` builds one |
 | `maxxing enterprise decisions SLUG [--since DATE] [--limit N] [--json]` | the decision log |
 | `maxxing enterprise export SLUG [-o FILE]` / `import FILE [--json]` | the enterprise as a zip / create one from a zip |
