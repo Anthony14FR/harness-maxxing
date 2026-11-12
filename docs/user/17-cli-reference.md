@@ -230,7 +230,8 @@ OAuth sign-ins (state "To connect") are done in Settings -> MCP -> **Connect**. 
 | `maxxing enterprise list [--json]` | the enterprises: id, name, positions, vacant, projects (needs Settings -> Features -> Enterprises) |
 | `maxxing enterprise create SLUG [--name N] [--emoji E] [--project P ...] [--json]` | create an enterprise |
 | `maxxing enterprise link SLUG PROJECT ...` / `unlink SLUG PROJECT ... [--vacate]` | link or unlink projects (unlinking a project whose agents hold positions needs `--vacate`) |
-| `maxxing enterprise show [SLUG] [--json]` | the chart as a tree with every position's state (an agent of the enterprise sees its own position, its lead and its reports) |
+| `maxxing enterprise show [SLUG] [--json]` | the chart as a tree with every position's state (read-only, never waits for approval; an agent of the enterprise sees its own position, its lead and its reports) |
+| `maxxing enterprise tasks [--mine] [--all] [--json]` | the delegated tasks: id, state, owner, requester, age, last move, hops (`--mine`: asked or held by the caller; `--all`: done ones too); read-only, never waits for approval, exits 1 when empty |
 | `maxxing enterprise position add SLUG ID [--title T] [--reports-to P] [--agent A] [--department D] [--job T\|--job-file F]` | add a position |
 | `maxxing enterprise position move SLUG ID --reports-to P` / `seat SLUG ID --agent A` / `vacate SLUG ID` / `remove SLUG ID [--reparent-to P]` | change the chart (`owner` = the top) |
 | `maxxing enterprise settings SLUG KEY=VALUE ... [--department D]` | change a setting (`digest.enabled=true`), a department's override, `name` or `notes`, or the name, emoji, top, `envelope.*` |
@@ -245,6 +246,7 @@ OAuth sign-ins (state "To connect") are done in Settings -> MCP -> **Connect**. 
 | `maxxing enterprise request hire WHY --title T --topic projects/<p>/topics/<t> [--department D] [--reports-to P] [--job TEXT] [--name N] [--role TEXT] [--model M] [--effort low\|medium\|high\|xhigh\|max]` | from a position: ask the owner to create a position and hire its agent (done on Accept; `--title` and `--topic` required) |
 | `maxxing enterprise review TASK approve\|changes [NOTES]` | from the reviewer position (setting `review_by`): approve a hand-in or send it back (notes required for `changes`) |
 | `maxxing enterprise meeting start TOPIC --with P1,P2 [--hours H]` / `reply ID TEXT` | from a lead (or the owner): ask positions of its branch for their view (the top may invite any; closes after 4 h by default); an invited position answers once, the organizer gets the minutes |
+| `maxxing enterprise report-to-owner TEXT` | from the top position only: one message to you (in total autonomy it is the only agent message that reaches you) |
 | `maxxing enterprise objective set ID VALUE` | from a position: the value of an objective it owns |
 | `maxxing enterprise route DEPARTMENT TEXT` | from the front desk position: pass a request on to a department (a task marked as coming from outside) |
 | `maxxing enterprise worker start TEXT [--for TASK]` / `list` / `stop ID` | from a position: start a temporary worker (needs workers set to visible) / list them / stop one (`stop`: the owner) |

@@ -105,6 +105,11 @@ Deliveries are not one run per message: they wait in the position's **inbox**, a
 everything waiting, after its usual grouping delay. A delivery that cannot start (agent off, budget or runs per hour
 reached, vacant position) **waits** instead of being lost. These runs count in the agent's budget and limits.
 
+**Follow-ups**: nobody has to watch for a late task. When a delegated task has not moved for **4 hours** (**2 hours**
+in total autonomy), the position that asked for it is woken with the list of those tasks, to chase, escalate or decide
+(once per task per period; a task whose owner is running right now is left alone). In total autonomy the top position
+also gets one **daily follow-up** listing every open task. See what is open with `maxxing enterprise tasks`.
+
 Delegation to a direct report never needs a request, whatever the department of the report. This is fixed
 behaviour, not a setting.
 
@@ -198,6 +203,22 @@ and removals** (`hire`, `hire_remove`), changes of **keys, domains, sandbox and 
   decide: what is requested in it climbs to you.
 - Switching it **off** hands the requests still waiting at the top back to you, with their cards.
 
+**Total autonomy** (setting, off by default, at the top of the settings; needs a top position of the chart): the
+enterprise runs by itself and **each request is decided by the requester's lead**, while the top position decides its
+own and has the last word. While it is on, **Autonomy** is *autonomous*, **Trust along the chain** is on and **The top
+position decides for me** is on, whatever you stored (the settings show these values, disabled; your choices come
+back when you switch it off). What is free stays free: routine work needs no request. A lead that is vacant, switched
+off or out of budget is skipped for the next one above; when the top is unavailable, the request reaches you.
+Occupants are told to work with maximum proactivity: never wait, chase, decide at their level.
+
+- **Still yours**: requests born from outside content, `hire` and `hire_remove`, prices and terms, and putting the
+  front desk live.
+- **Escalations stop at the top**: a question climbs no further than the top position, which answers it. Only when the
+  top is unavailable does it reach you.
+- **Only the top writes to you**, with `maxxing enterprise report-to-owner "text"` (no other position may). Every
+  other notification is muted (it stays in the decision log) except the cards that wait for your answer, the daily
+  digest and the weekly and monthly reports, and the envelope alerts.
+
 **Delegated approval**: you can let a lead decide a category up to a ceiling until a date ("until Friday, the head of
 marketing decides spending up to 50 USD"), 30 days at most, revocable. It never covers the rows where you always
 decide. See [the command line](#from-the-command-line).
@@ -262,7 +283,23 @@ the agent trusts outside events). Inside a chart this would send you a card for 
 started from your words or a schedule, and no run in the chain was started from outside) reaches the receiver as an
 order from its lead. One outside-started run **anywhere** in the chain keeps everything after it outside text, and the
 mark is set by the server, never by an agent. Hand-ins going up are always information for the lead, never orders.
+
+In a clean chain, **reports from the team** (hand-ins, blockers, escalations, requests, meeting replies) are not
+outside text either: the receiver gets them in its normal prompt, framed as information, so its run does not need your
+approvals. An item that carries an outside mark keeps today's behaviour, and a batch that mixes both is split so the
+outside items run alone. The read-only commands `maxxing enterprise show`, `profile` and `tasks` never wait for
+approval, even in a run started from outside; run them alone on their line (no pipe), so they match.
 Leave it off if you do not need it: it relaxes a safety default.
+
+## Who is doing what
+
+- **Right now**: a strip under the header of an enterprise shows who is working, waiting, blocked or has deliveries
+  queued, on which task and since when, with a link to the agent.
+- **Tasks** tab: the tasks agents delegated to each other, grouped as *To do*, *In progress*, *In review*, *Blocked* and
+  *Done*, with owner, requester, age, last move, hand-overs (**Hops**), an **Outside content** marker and a link to the
+  run. Filter by position.
+- **Delegations** card, on the page of a seated agent: the tasks it asked for, with their live state (waiting in the
+  inbox, working, handed in, blocked, in review).
 
 ## The digest, reports and the Overview
 
@@ -365,7 +402,7 @@ commands are **yours**: an agent never changes the chart, its settings or its gr
 | Who | Commands |
 |---|---|
 | You | `create`, `link`, `unlink`, `position add\|move\|seat\|vacate\|remove`, `settings`, `grant`, `report`, `decisions`, `export`, `import` |
-| An agent, as its own position | `show`, `profile`, `assign`, `done`, `block`, `escalate`, `answer`, `request` (with `request hire`), `decide`, `review`, `meeting start\|reply`, `objective set`, `worker`, and `route` (front desk) |
+| An agent, as its own position | `show`, `profile`, `tasks`, `assign`, `done`, `block`, `escalate`, `answer`, `request` (with `request hire`), `decide`, `review`, `meeting start\|reply`, `objective set`, `worker`, `report-to-owner` (top position only), and `route` (front desk) |
 
 You can run the agent commands too, with `--as POSITION`, to test a flow. The `maxxing-enterprises` skill lets Claude
 set a chart up from a conversation.

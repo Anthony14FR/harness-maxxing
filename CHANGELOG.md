@@ -223,6 +223,17 @@ New:
     can run an enterprise by talking only to its CEO. Outside content, hires, keys, domains, sandbox and folders,
     prices and terms and the front desk still come to you. It works fully with Trust along the chain on (Settings
     warns and offers it); switching it off gives the waiting requests back to you.
+  - **Total autonomy**: one switch for an enterprise that runs itself. Each agent's own lead decides what it cannot,
+    and the top position has the last word (it needs a top position). What is free stays free. Still yours: outside
+    content, hires, prices and terms, and putting the front desk live. Questions stop at the top, and only the top
+    writes to you (`maxxing enterprise report-to-owner`): other messages are muted, except cards, reports and
+    budget alerts.
+  - **Follow-ups**: a delegated task nobody moves for 4 hours (2 in total autonomy) wakes the position that asked
+    for it; in total autonomy the top also gets a daily list of open tasks. `maxxing enterprise tasks` lists them.
+  - **Who is doing what**: a **Right now** strip on the enterprise page, a **Tasks** tab, and a **Delegations** card
+    on the agent page.
+  - **Less waiting for approval**: reports from the team in a trusted chain are no longer treated as outside text,
+    and the read-only commands `show`, `profile` and `tasks` never wait for approval.
   - **Review before hand-in**: name a reviewer position; a hand-in goes to it first, which approves it or asks for
     changes; nobody can accept the task meanwhile.
   - **Meetings**: a lead (or you) asks several positions for their view and gets the minutes.

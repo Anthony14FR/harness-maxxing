@@ -279,6 +279,28 @@ shown in the product. Newest first, same version headings as `CHANGELOG.md`.
   (**the version's upgrade note must add it to existing workspaces**). Tests: `test_team.py::test_cli_send_*`,
   `test_a_write_from_another_process_refreshes_the_pages`.
 
+- Enterprises, total autonomy and follow-ups. Setting `zero_intervention` (bool, false, enterprise-wide, no department
+  override; `enterprises.SETTINGS`): `enterprises.setting` returns `ZERO_FORCED` (`autonomy` autonomous, `trust_chain`
+  and `top_decides` true) while it is on, stored values untouched; `GET /{e}` adds `effective`; saving it with top
+  `owner` is `400 needs_top`. `enterprise_policy.zero(slug)`; `decider` returns the requester's lead (the top itself
+  for the top, vacant or unavailable lead -> next ancestor -> top -> owner) for every category outside `TOP_NEVER`,
+  except `free` categories, which stay `free`; outside-started requests and safety requests still go to the owner.
+  Escalations: `_top_stop` and the climb never pass the top position (`enterprise_flow`), the owner only when the top
+  is unavailable. `enterprise_reports.notify_owner(..., always=False)` logs `owner_muted` and sends nothing in zero
+  mode unless the call has `actions` or `always=True` (reports, envelope alerts, hire failures, `report_to_owner`).
+  `enterprise_flow.report_to_owner` (CLI `report-to-owner`, `403 not_top` for any other position). The knowledge note
+  gains one paragraph in zero mode.
+  Trust: with the effective `trust_chain`, clean items (`_dirty`: no outside mark on the item or its task) going up are
+  delivered in the trusted prompt framed by `UP_FRAME`; a mixed batch is split (outside items alone).
+  `agents.run_settings` always pre-allows `ENTERPRISE_READONLY` (`show`, `profile`, `tasks`) for a seated agent, outside
+  and forced runs included, except a front desk run; the commands must be alone on their line to match.
+  Follow-up: kind `followup` (a DOWN kind), `stale_hours` reads `stale_h` (default 4, zero mode 2, 0 = off; read from
+  the stored settings, not in the validated list nor the settings page); the tick wakes the requester of a quiet open
+  task once per `stale_h` (`flow.nudged`), skips tasks whose owner runs, and in zero mode wakes the top once a day
+  (`flow.top_followup`) with every open task. CLI `tasks [--mine] [--all] [--json]` (`tasks_view`, in `TURN_CMDS`).
+  Routes `GET /api/enterprises/{e}/tasks` and `/now` (`now_view`), see API.md. Web: "Total autonomy" switch (the three
+  forced controls show their effective value, disabled), `NowStrip`, `Tasks` tab, `Delegations` card on the agent page
+  (reads the enterprise bus topic).
 - Enterprises, improvements. Settings (`enterprises.SETTINGS`, validated): `top_decides`, `shared_keys`, `review_by`.
   `enterprise_policy._owner_or_top` sends to the top position what `_route` would send to the owner, except
   `TOP_NEVER` (`hire`, `hire_remove`, `profile_terms`, `desk_live`), outside-started requests and the safety requests;
