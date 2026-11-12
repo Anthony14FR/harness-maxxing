@@ -265,6 +265,14 @@ def _grant(slug: str, pos: str, category: str, amount: float | None, now: float)
     return best[1] if best else None
 
 
+def zero(slug: str) -> bool:
+    """Total autonomy is on: the requester's lead decides, the top has the last word (never raises)."""
+    try:
+        return bool(enterprises.setting(slug, "zero_intervention"))
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def _top_decides(slug: str) -> bool:
     return bool(enterprises.setting(slug, "top_decides"))
 
@@ -287,6 +295,13 @@ def _route(slug: str, pos: str, category: str, amount: float | None, outside: bo
         return "owner", ""                                   # invariant 1; an unknown category is never delegated
     if category == "spending" and amount is None:
         return _owner_or_top(slug, category, use_top)        # undeclared spending
+    if zero(slug) and category not in TOP_NEVER:
+        if CATEGORIES[category].get("autonomous") == "free":
+            return "free", ""                                # what is free stays free: no request for routine work
+        top = _data(slug).get("top")
+        lead = enterprises.lead_of(slug, pos)
+        who = lead or (top if isinstance(top, str) and enterprises.position(slug, top) else "")
+        return ("lead", who) if who else ("owner", "")       # N+1 decides; the top decides its own request
     granted = _grant(slug, pos, category, amount, _now(now))
     if granted:
         return "lead", granted
@@ -326,6 +341,12 @@ def _pick(slug: str, pos: str, after: str | None = None) -> str:
         chain = chain[chain.index(after) + 1:]
     elif after and after != "owner":
         chain = []
+    top = _data(slug).get("top")
+    if zero(slug) and isinstance(top, str) and top != "owner" and enterprises.position(slug, top):
+        if after == top:
+            chain = [top]                                    # the climb stops at the top: it keeps the request
+        elif top not in chain and after != "owner":
+            chain = [*chain, top]
     for p in chain:
         if _ready(slug, p):
             return p
@@ -605,7 +626,8 @@ def _hire_failed(slug: str, r: dict, title: str, reason: str) -> str:
         from . import enterprise_reports
         enterprise_reports.notify_owner(slug, _t("hire_failed_title", title=title),
                                         _t("hire_failed_body", title=title, reason=reason), level="warning",
-                                        url=f"/enterprises/{slug}", dedupe=f"enterprise:{slug}:{r['id']}:hire_failed")
+                                        url=f"/enterprises/{slug}", dedupe=f"enterprise:{slug}:{r['id']}:hire_failed",
+                                        always=True)
     except Exception:  # noqa: BLE001
         log.exception("enterprise %s: owner notification failed", slug)
     return _t("hire_failed", reason=reason)
@@ -833,7 +855,8 @@ def _send_tell(slug: str, ref: str, label: str, usd: float) -> None:
     title, body = _t("env_title", label=label), _t("env_body", usd=usd)
     try:
         from . import enterprise_reports
-        enterprise_reports.notify_owner(slug, title, body, level="warning", url=f"/enterprises/{slug}", dedupe=ref)
+        enterprise_reports.notify_owner(slug, title, body, level="warning", url=f"/enterprises/{slug}", dedupe=ref,
+                                        always=True)
         return
     except (ImportError, AttributeError):
         pass

@@ -462,3 +462,14 @@ def test_gateway_forgets_a_deleted_enterprise_thread(mx_state):
     assert gateway.enterprise_of_thread(42) == S and gateway.enterprise_of_thread(43) is None
     gateway._forget_thread(42)
     assert gateway.enterprise_threads() == {}
+
+
+def test_zero_mutes_owner_notifications_except_cards_and_reports(client, topic, mx, monkeypatch):
+    _setup(client, topic)
+    assert client.patch(f"{E}/{S}", json={"top": "lead", "settings": {"zero_intervention": True}}).status_code == 200
+    reports.notify_owner(S, "Late task", "x", dedupe="m1")
+    assert _events() == []
+    reports.notify_owner(S, "Report", "x", dedupe="m2", always=True)
+    reports.notify_owner(S, "Card", "x", dedupe="m3", actions=[{"id": "open", "label": "Open"}])
+    assert sorted(e["title"] for e in _events()) == ["Card", "Report"]
+    assert any(x["kind"] == "owner_muted" for x in enterprises.decisions(S)[0])
