@@ -64,7 +64,7 @@ MATRIX = {                                  # category: (careful, balanced, auto
     "assign_cross": ("owner", "lead", "lead"), "edit_job": ("owner", "lead", "lead"), "worker": ("owner", "lead", "lead"),
     "profile_edit": ("owner", "lead", "lead"), "raise_budget": ("owner", "owner", "lead"),
     "reseat": ("owner", "owner", "lead"), "profile_terms": ("owner",) * 3, "desk_live": ("owner",) * 3,
-    "hire_remove": ("owner",) * 3, "spending_high": ("owner",) * 3, "recurring": ("owner",) * 3, "publish": ("owner",) * 3,
+    "hire_remove": ("owner",) * 3, "hire": ("owner",) * 3, "spending_high": ("owner",) * 3, "recurring": ("owner",) * 3, "publish": ("owner",) * 3,
 }
 
 
@@ -538,3 +538,126 @@ def test_blocked_state_and_requester_reassigned(ent):
     ent.request  # noqa: B018
     enterprises.remove_position(SLUG, "head", reparent_to="boss")
     assert tasks_api.get_task(t["id"])["enterprise"]["requester"] == "boss"
+
+
+# ---- the top position decides ---------------------------------------------------------------------------------
+@pytest.fixture
+def top_on(ent, monkeypatch):
+    """The setting `top_decides` on, with `boss` as the top position (read through the lookup, like the file would)."""
+    _set(ent, top="boss")
+    real = enterprises.setting
+    monkeypatch.setattr(enterprises, "setting",
+                        lambda slug, name, pos=None: True if name == "top_decides" else real(slug, name, pos))
+    return ent
+
+
+def test_top_decides_takes_what_was_the_owners(top_on):
+    _autonomy(top_on, "careful")
+    r = pol.request(SLUG, "writer", "deliver_cross", "Drop a file into the operations folder")
+    assert r["decider"] == "boss" and r["status"] == "pending"
+    assert _msgs("boss", "request") and not feed.find(f"enterprise:{SLUG}:{r['id']}")
+    assert pol.decide(SLUG, r["id"], "allow", by="boss")["decided_by"] == "boss"
+    own = pol.request(SLUG, "boss", "publish", "Announce the price list")
+    assert own["decider"] == "boss"
+    assert pol.decide(SLUG, own["id"], "allow", by="boss")["status"] == "allowed"
+    assert any("top position decided its own request" in x["text"] for x in enterprises.decisions(SLUG)[0])
+    other = pol.request(SLUG, "writer", "publish", "Post it")
+    with pytest.raises(enterprises.EnterpriseError):
+        pol.decide(SLUG, other["id"], "allow", by="head")
+
+
+def test_top_decides_keeps_the_invariants_with_the_owner(top_on):
+    for cat in ("hire", "hire_remove", "profile_terms", "desk_live"):
+        assert pol.decider(SLUG, "writer", cat) == "owner", cat
+    assert pol.decider(SLUG, "writer", "publish", outside=True) == "owner"
+    assert pol.decider(SLUG, "writer", "publish") == "lead"
+
+
+def test_top_decides_off_changes_nothing(ent):
+    _set(ent, top="boss")
+    assert pol.decider(SLUG, "writer", "publish") == "owner"
+
+
+def test_top_that_cannot_decide_falls_back_to_the_owner(top_on):
+    rev = top_on.get(E).json()["rev"]
+    assert top_on.patch(f"{E}/positions/boss", json={"agent": None, "rev": rev}).status_code == 200
+    r = pol.request(SLUG, "writer", "publish", "Post it")
+    assert r["decider"] == "owner"
+
+
+# ---- hire requests --------------------------------------------------------------------------------------------
+HIRE = {"title": "Support Agent", "department": "ops", "reports_to": "ops", "job": "Answer customers",
+        "topic": "projects/acme/topics/blog", "name": "Sam", "role": "You answer customers.", "model": "sonnet",
+        "effort": "high"}
+
+
+def _fake_hire(monkeypatch, fail=False):
+    calls = []
+
+    def hire_custom(slug, pos, topic, name=None, role=None, model=None, effort=None):
+        calls.append((slug, pos, topic, name, role, model, effort))
+        if fail:
+            raise enterprises.EnterpriseError(400, "bad_project", "no such topic")
+        return "projects/acme/topics/blog/agents/sam"
+    monkeypatch.setattr(enterprises, "hire_custom", hire_custom, raising=False)
+    return calls
+
+
+def test_hire_request_needs_a_title_and_a_topic(ent):
+    for payload in (None, {"title": "x"}, {"topic": "projects/acme/topics/blog"}):
+        with pytest.raises(enterprises.EnterpriseError) as e:
+            pol.request(SLUG, "head", "hire", "We need someone", payload=payload)
+        assert e.value.code == "invalid"
+
+
+def test_hire_request_is_always_the_owners_and_creates_the_position_on_accept(ent, monkeypatch):
+    _autonomy(ent, "autonomous")
+    calls = _fake_hire(monkeypatch)
+    r = pol.request(SLUG, "head", "hire", "Customers wait too long", payload=HIRE)
+    assert r["decider"] == "owner" and r["status"] == "pending"
+    card = _card(r)
+    assert "Support Agent" in card["body"] and "Sam" in card["body"]
+    assert calls == []
+    pol.decide(SLUG, r["id"], "allow")
+    pos = enterprises.position(SLUG, "support-agent")
+    assert pos and pos["reports_to"] == "ops" and pos["department"] == "ops" and pos["job"] == "Answer customers"
+    assert calls == [(SLUG, "support-agent", "projects/acme/topics/blog", "Sam", "You answer customers.", "sonnet", "high")]
+    text = _msgs("head", "decision")[-1]["text"]
+    assert "Support Agent" in text and "Done" in text
+
+
+def test_hire_request_denied_creates_nothing(ent, monkeypatch):
+    calls = _fake_hire(monkeypatch)
+    r = pol.request(SLUG, "head", "hire", "One more", payload=HIRE)
+    pol.decide(SLUG, r["id"], "deny")
+    assert enterprises.position(SLUG, "support-agent") is None and calls == []
+
+
+def test_a_failed_hire_leaves_no_position_and_says_why(ent, monkeypatch):
+    _fake_hire(monkeypatch, fail=True)
+    r = pol.request(SLUG, "head", "hire", "One more", payload=HIRE)
+    pol.decide(SLUG, r["id"], "allow")
+    assert enterprises.position(SLUG, "support-agent") is None
+    text = _msgs("head", "decision")[-1]["text"]
+    assert "Not done" in text and "no such topic" in text
+
+
+# ---- texts in the server language -----------------------------------------------------------------------------
+def test_texts_follow_the_server_language(ent, monkeypatch):
+    monkeypatch.setattr(pol, "_lang", lambda: "fr")
+    r = pol.request(SLUG, "writer", "publish", "Annoncer les tarifs", amount=3)
+    ev = _card(r)
+    assert ev["title"].startswith("Writer demande :") and "Montant : 3 USD" in ev["body"]
+    assert [a["label"] for a in ev["actions"]] == ["Autoriser", "Refuser", "Ouvrir"]
+    pol.decide(SLUG, r["id"], "allow")
+    assert "a été acceptée par le propriétaire" in _msgs("writer", "decision")[-1]["text"]
+    pol.request(SLUG, "writer", "edit_job", "Changer la fiche")
+    got = _msgs("head", "request")[-1]["text"]
+    assert "Demande" in got and "Décidez avec" in got
+    monkeypatch.setattr(pol, "_lang", lambda: "en")
+    r2 = pol.request(SLUG, "editor", "publish", "Post it")
+    assert _card(r2)["title"] == "Editor asks: " + pol.CATEGORIES["publish"]["label"]
+
+
+def test_every_category_has_a_french_label():
+    assert set(pol.LABELS_FR) == set(pol.CATEGORIES)

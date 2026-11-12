@@ -61,6 +61,54 @@ SYSTEM = {
 }
 
 
+# Server-written texts of the reports by language (config `language`); English is the fallback.
+TEXTS = {
+    "general": {"en": "General", "fr": "Général"},
+    "result_one": {"en": "{n} result", "fr": "{n} résultat"},
+    "result_many": {"en": "{n} results", "fr": "{n} résultats"},
+    "failed": {"en": "failed", "fr": "en échec"},
+    "skipped": {"en": "skipped", "fr": "ignoré"},
+    "result": {"en": "result", "fr": "résultat"},
+    "done": {"en": "task done", "fr": "tâche terminée"},
+    "opened": {"en": "task opened", "fr": "tâche ouverte"},
+    "late": {"en": "task late", "fr": "tâche en retard"},
+    "cost_line": {"en": "cost today: ${x:.2f}", "fr": "coût du jour : {x:.2f} $"},
+    "esc_open": {"en": "Escalations open", "fr": "Escalades ouvertes"},
+    "req_waiting": {"en": "Requests waiting", "fr": "Demandes en attente"},
+    "cost_today": {"en": "Cost today: ${x:.2f}", "fr": "Coût du jour : {x:.2f} $"},
+    "period": {"en": "Period: {a} to {b}", "fr": "Période : du {a} au {b}"},
+    "tasks": {"en": "Tasks: {d} done, {o} opened, {b} blocked", "fr": "Tâches : {d} terminées, {o} ouvertes, {b} bloquées"},
+    "blocked": {"en": "blocked", "fr": "bloquée"},
+    "objectives": {"en": "Objectives", "fr": "Objectifs"},
+    "cost_dept": {"en": "Cost per department", "fr": "Coût par département"},
+    "ceiling": {"en": " (ceiling ${x:.2f} a day)", "fr": " (plafond {x:.2f} $ par jour)"},
+    "total": {"en": "Total: ${x:.2f}", "fr": "Total : {x:.2f} $"},
+    "decisions": {"en": "Decisions taken", "fr": "Décisions prises"},
+    "none": {"en": "none", "fr": "aucune"},
+    "open_line": {"en": "Open: {e} escalations, {r} requests waiting", "fr": "En cours : {e} escalades, {r} demandes en attente"},
+    "t_daily": {"en": "Daily digest - {name} - {day}", "fr": "Résumé du jour - {name} - {day}"},
+    "t_weekly": {"en": "Weekly review - {name} - {day}", "fr": "Bilan de la semaine - {name} - {day}"},
+    "t_monthly": {"en": "Monthly report - {name} - {day}", "fr": "Rapport du mois - {name} - {day}"},
+    "why_budget": {"en": "the daily budget is reached", "fr": "le budget quotidien est atteint"},
+    "why_call": {"en": "the summary could not be written", "fr": "le résumé n'a pas pu être écrit"},
+    "raw": {"en": "_Raw list: {why}._", "fr": "_Liste brute : {why}._"},
+}
+FR_PROMPT = " Write the whole answer in French."
+
+
+def _lang() -> str:
+    try:
+        return "fr" if str(config.load_config().get("language") or "en") == "fr" else "en"
+    except Exception:  # noqa: BLE001 - a text never fails a report
+        return "en"
+
+
+def _t(key: str, **kw: Any) -> str:
+    row = TEXTS[key]
+    text = row.get(_lang()) or row["en"]
+    return text.format(**kw) if kw else text
+
+
 # ---- time ----------------------------------------------------------------------------------------------------
 def _zone() -> Any:
     from zoneinfo import ZoneInfo
@@ -305,24 +353,24 @@ def _lines(c: dict, d: dict, only: set[str] | None = None) -> str:
             by_dept.setdefault(r["department"], []).append(r)
     out: list[str] = []
     for dept, rows in by_dept.items():
-        out.append(f"## {_dept_name(d, dept) or 'General'}")
+        out.append(f"## {_dept_name(d, dept) or _t('general')}")
         for r in rows:
             n = r["count"]
-            facts = [f"{n} result{'s' if n != 1 else ''}"] if n else []
-            facts += [f"{r[k]} {k}" for k in ("failed", "skipped") if r[k]]
+            facts = [_t("result_one" if n == 1 else "result_many", n=n)] if n else []
+            facts += [f"{r[k]} {_t(k)}" for k in ("failed", "skipped") if r[k]]
             out.append(f"- **{r['title']}**" + (f": {', '.join(facts)}" if facts else ""))
-            out += [f"  - result: {x}" for x in r["results"][:3]]
-            for k, label in (("done", "task done"), ("opened", "task opened"), ("late", "task late")):
-                out += [f"  - {label}: {x}" for x in r[k][:5]]
+            out += [f"  - {_t('result')}: {x}" for x in r["results"][:3]]
+            for k in ("done", "opened", "late"):
+                out += [f"  - {_t(k)}: {x}" for x in r[k][:5]]
             if r["cost"]:
-                out.append(f"  - cost today: ${r['cost']:.2f}")
+                out.append("  - " + _t("cost_line", x=r["cost"]))
     if only is None:
-        for label, items in (("Escalations open", c["escalations"]), ("Requests waiting", c["requests"])):
+        for label, items in ((_t("esc_open"), c["escalations"]), (_t("req_waiting"), c["requests"])):
             if items:
                 out.append(f"## {label} ({len(items)})")
                 out += [f"- {str(x.get('position') or '')}: {_first_line(x.get('text'))}" if not c["titles_only"]
                         else f"- {str(x.get('position') or '')}" for x in items[:10]]
-        out.append(f"Cost today: ${c['cost']:.2f}")
+        out.append(_t("cost_today", x=c["cost"]))
     return "\n".join(out)[:RAW_MAX]
 
 
@@ -347,26 +395,25 @@ def _period_lines(slug: str, d: dict, kind: str, now: float) -> tuple[str, bool]
     done = [t for t in tasks if t.get("status") == "done" and (t.get("done_at") or t.get("updated") or 0) > start]
     opened = [t for t in tasks if (t.get("created") or 0) > start]
     blocked = [t for t in tasks if t.get("status") != "done" and t["enterprise"].get("stage") == "blocked"]
-    out = [f"Period: {_day(start)} to {_day(now)}",
-           f"Tasks: {len(done)} done, {len(opened)} opened, {len(blocked)} blocked"]
-    out += [f"- blocked: {str(t.get('title') or '')[:120]}" for t in blocked[:10]]
-    out.append("## Objectives")
+    out = [_t("period", a=_day(start), b=_day(now)), _t("tasks", d=len(done), o=len(opened), b=len(blocked))]
+    out += [f"- {_t('blocked')}: {str(t.get('title') or '')[:120]}" for t in blocked[:10]]
+    out.append(f"## {_t('objectives')}")
     for o in d["objectives"]:
         pct = f" ({round(100 * o['value'] / o['target'])} %)" if o.get("target") and o.get("value") is not None else ""
         out.append(f"- {o['text']}: {o.get('value')} / {o.get('target')} {o.get('unit')}{pct}")
-    out.append("## Cost per department")
+    out.append(f"## {_t('cost_dept')}")
     dept_cap = {k: float((v.get("envelope") or {}).get("usd_per_day") or 0) for k, v in d["departments"].items()}
     for dept, cost in sorted(per_dept.items()):
         cap = dept_cap.get(dept, 0.0)
-        out.append(f"- {_dept_name(d, dept) or 'General'}: ${cost:.2f}" + (f" (ceiling ${cap:.2f} a day)" if cap else ""))
-    out.append(f"Total: ${sum(per_dept.values()):.2f}")
+        out.append(f"- {_dept_name(d, dept) or _t('general')}: ${cost:.2f}" + (_t("ceiling", x=cap) if cap else ""))
+    out.append(_t("total", x=sum(per_dept.values())))
     if kind == "monthly":
-        out.append("## Decisions taken")
+        out.append(f"## {_t('decisions')}")
         counts = _decisions_since(slug, start)
-        out += [f"- {k}: {n}" for k, n in sorted(counts.items())] or ["- none"]
+        out += [f"- {k}: {n}" for k, n in sorted(counts.items())] or [f"- {_t('none')}"]
     esc, req = _open_escalations(slug), _waiting_requests(slug)
     if esc or req:
-        out.append(f"Open: {len(esc)} escalations, {len(req)} requests waiting")
+        out.append(_t("open_line", e=len(esc), r=len(req)))
     something = bool(done or opened or blocked or d["objectives"] or any(per_dept.values()))
     return "\n".join(out)[:RAW_MAX], something
 
@@ -376,7 +423,8 @@ def _ask(system: str, text: str) -> tuple[str, float]:
     """One tool-less `claude -p` call (the one Team's Summarize makes) -> (answer, cost in USD). Raises on failure."""
     from .sessions import spawn
     cmd = [spawn.claude_bin(), "-p", "--output-format", "json", "--model", MODEL, "--tools", "",
-           "--no-session-persistence", "--strict-mcp-config", "--disable-slash-commands", "--system-prompt", system]
+           "--no-session-persistence", "--strict-mcp-config", "--disable-slash-commands", "--system-prompt",
+           system + (FR_PROMPT if _lang() == "fr" else "")]
     prompt = text.encode("utf-8", "replace").decode("utf-8")
     r = subprocess.run(cmd, input=prompt, capture_output=True, text=True, timeout=CALL_TIMEOUT_S,
                        cwd=config.state_dir("claude-titles"), env=spawn.claude_env(None, "default"))
@@ -433,28 +481,28 @@ def build(slug: str, kind: str = "daily", now: float | None = None, *, send: boo
                 idx["cursor"]["daily"] = now
                 _save_index(slug, idx)
                 return None
-            raw_text, system, title = _lines(c, d), SYSTEM["daily"], f"Daily digest - {title_name} - {_day(now)}"
+            raw_text, system, title = _lines(c, d), SYSTEM["daily"], _t("t_daily", name=title_name, day=_day(now))
         else:
             raw_text, something = _period_lines(slug, d, kind, now)
             if not something:
                 return None
             system = SYSTEM[kind]
-            title = f"{'Weekly review' if kind == 'weekly' else 'Monthly report'} - {title_name} - {_day(now)}"
+            title = _t("t_weekly" if kind == "weekly" else "t_monthly", name=title_name, day=_day(now))
         cost, raw, text, extra, why = 0.0, False, raw_text, "", ""
         cap = _ceiling(d)
         if cap and _spent_today(d, idx, now, slug=slug) >= cap:
-            raw, why = True, "the daily budget is reached"
+            raw, why = True, _t("why_budget")
         else:
             try:
                 text, cost = _ask(system, raw_text)
             except Exception as e:  # noqa: BLE001 - no call, no summary: the raw list is still the digest
                 log.warning("%s of %s: the call failed (%s): raw list", kind, slug, e)
-                raw, text, why = True, raw_text, "the summary could not be written"
+                raw, text, why = True, raw_text, _t("why_call")
         if kind == "daily" and dig.get("per_lead") and not raw:
             extra, extra_cost = _lead_syntheses(slug, d, c, idx, now, cost)
             cost += extra_cost
         body = text + (f"\n\n{extra}" if extra else "")
-        out = _write(slug, kind, now, title, body + (f"\n\n_Raw list: {why}._" if raw else ""),
+        out = _write(slug, kind, now, title, body + ("\n\n" + _t("raw", why=why) if raw else ""),
                      cost, raw)
         if kind == "daily":
             idx = _index(slug)
