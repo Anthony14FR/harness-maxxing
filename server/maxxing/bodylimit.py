@@ -37,7 +37,8 @@ def _public(path: str) -> bool:
     # /api/pc/pair (pairing code) and /api/pc/mcp (loopback + secret) check their own permission
     # /api/team-peer/* (other Harness servers) checks its own signatures
     # /api/browser/mcp/<session> (loopback + the turn's token: api/browser.py)
-    return path.startswith(("/api/auth/", "/api/hooks/", "/api/team-peer/", "/api/browser/mcp/")) or \
+    # /api/public/desk/<token> (the enterprise front desk's chat link: the token is the permission, 64 kB cap)
+    return path.startswith(("/api/auth/", "/api/hooks/", "/api/team-peer/", "/api/browser/mcp/", "/api/public/")) or \
         path in ("/api/pc/pair", "/api/pc/mcp")
 
 
