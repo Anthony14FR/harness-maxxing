@@ -111,7 +111,7 @@ after 10 minutes, 30 minutes and 2 hours; then the lead (or you) is told. **Resu
 **Follow-ups**: nobody has to watch for a late task. In total autonomy, when a delegated task has not moved for
 **2 hours**, the position that asked for it is woken with the list of those tasks, to ask the owner of each task,
 escalate, decide or accept what is ready. A task is nudged again after twice as long each time (4 hours, 8, 16, then
-every 24 hours at most) and the count starts over when it moves; a task whose owner is running right now is left alone.
+every 24 hours at most) and the count starts over when it moves; a task whose owner is running right now is left alone (a handed-in or reviewed task waits for its requester instead).
 Outside total autonomy follow-ups are off until you set **stale_h** (hours, 0 to 168, 0 = off) in the settings. In
 total autonomy the top position also gets one **daily follow-up** listing the open tasks; a task that carries outside
 content is only counted ("N tasks with outside content"), never quoted. See what is open with
@@ -130,8 +130,8 @@ that, it goes to you.
 
 Set **Reviewer** in the settings (a position) and a contributor's hand-in no longer goes straight to the requester: the
 task goes to the reviewer first (stage **Waiting for review**). The reviewer runs
-`maxxing enterprise review TASK approve` (stage **Reviewed**, then the usual hand-in to the requester, mentioning the
-review) or `maxxing enterprise review TASK changes "notes"` (stage **Changes asked**; the notes go back to the task's
+`maxxing enterprise review TASK approve` (stage **Reviewed**, then the usual hand-in to the requester, telling it to
+accept the task or send it back; the stale-task follow-up covers it too) or `maxxing enterprise review TASK changes "notes"` (stage **Changes asked**; the notes go back to the task's
 owner, who goes on working). Only the reviewer can use the command, and a task owned by the reviewer itself is not
 reviewed. Leave the setting empty for no review step.
 
