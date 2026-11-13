@@ -5,6 +5,51 @@ All notable changes to Harness Maxxing. Versions follow semantic versioning.
 
 ## Unreleased
 
+New:
+- **Enterprises**: an org chart for your agents. Link several projects, draw positions with leads, hire or seat an
+  agent in each, and let work go down (delegation) and blockers go up (escalation) while you get one daily digest
+  instead of one message per agent. A shared daily budget, three autonomy profiles that decide what a lead may approve
+  alone, and a Telegram thread per enterprise. Off by default: Settings -> Features -> Enterprises (needs Agents).
+  [Show me](#show:enterprises)
+  - **Failed runs retry**: when a run is cut or fails, its deliveries come back to the position's inbox and are tried
+    again later; after three tries the lead (or you) is told. A **Resume** button and `maxxing enterprise resume`
+    tell a position to go through its open tasks again.
+  - **Front desk**: a labelled AI assistant on a public chat link answers customers and passes requests to the right
+    team.
+  - **Reports**: daily digest, weekly and monthly reports, and an Overview of cost, late work and what waits for you.
+  - **Export and import**: download an enterprise as a zip from its Settings tab and import it as a new one, from
+    there or from the Enterprises page.
+  - **The top position decides for me**: a setting that lets the top of the chart decide what would reach you, so you
+    can run an enterprise by talking only to its CEO. Outside content, hires, keys, domains, sandbox and folders,
+    prices and terms and the front desk still come to you. It works fully with Trust along the chain on (Settings
+    warns and offers it); switching it off gives the waiting requests back to you.
+  - **Total autonomy**: one switch for an enterprise that runs itself. Each agent's own lead decides what it cannot,
+    and the top position has the last word (it needs a top position). What is free stays free. Still yours: outside
+    content, hires, prices and terms, and putting the front desk live. Questions stop at the top, and only the top
+    writes to you (`maxxing enterprise report-to-owner`): other messages are muted, except cards, reports and
+    budget alerts.
+  - **Follow-ups**: in total autonomy a delegated task nobody moves for 2 hours wakes the position that asked for it
+    (then again after longer and longer waits); the top also gets a daily list of open tasks. Outside total autonomy
+    set "stale_h" to turn them on. `maxxing enterprise tasks` lists the tasks.
+  - **Who is doing what**: a **Right now** strip on the enterprise page, a **Tasks** tab, and a **Delegations** card
+    on the agent page.
+  - **Less waiting for approval**: reports from the team in a trusted chain are no longer treated as outside text,
+    and the read-only commands `show`, `profile` and `tasks` never wait for approval (unless the run started from
+    outside content).
+  - **Review before hand-in**: name a reviewer position; a hand-in goes to it first, which approves it or asks for
+    changes; nobody can accept the task meanwhile.
+  - **Meetings**: a lead (or you) asks several positions for their view and gets the minutes.
+  - **Hiring**: a position can ask to hire (you accept, the agent is created; the card shows the role, the settings
+    and whether it came from outside); the Hire dialog sets the agent's name,
+    role, model and effort; seating an agent of a project not linked yet offers to link it.
+  - **Shared keys** given to every occupant, and **positions that run outside code**, which need a protected agent
+    with no key, on every run; an import resets shared keys.
+  - **Budget warnings** when agents' budgets exceed a department's ceiling, with **Split the ceiling**. With a Claude
+    subscription the amounts are estimates at API prices; the real limit is your quota.
+  - A lead delegates to its direct reports in any department without a request. Notification titles and Telegram
+    cards follow the server language. The position panel shows how much of the 3,000-character note is used.
+- **Agents: an effort level.** Each agent has an Effort setting (low to max) next to its model, passed to Claude Code.
+
 Changed:
 - **Files: the preview loads in the shape of the file.** While a file opens (a path clicked in a conversation, the
   Files page), the viewer no longer shows the same grey bars for everything: a picture frame for an image, a page for
@@ -209,49 +254,6 @@ New:
   for her". Claude writes to them (nothing goes out unless your message asks for it) and says what it sent. A
   session receives it as a message marked with the session that sent it. New command `maxxing sessions send
   <session> "<message>"` (and `sessions list`), usable from a script too.
-- **Enterprises**: an org chart for your agents. Link several projects, draw positions with leads, hire or seat an
-  agent in each, and let work go down (delegation) and blockers go up (escalation) while you get one daily digest
-  instead of one message per agent. A shared daily budget, three autonomy profiles that decide what a lead may approve
-  alone, and a Telegram thread per enterprise. Off by default: Settings -> Features -> Enterprises (needs Agents).
-  [Show me](#show:enterprises)
-  - **Failed runs retry**: when a run is cut or fails, its deliveries come back to the position's inbox and are tried
-    again later; after three tries the lead (or you) is told. A **Resume** button and `maxxing enterprise resume`
-    tell a position to go through its open tasks again.
-  - **Front desk**: a labelled AI assistant on a public chat link answers customers and passes requests to the right
-    team.
-  - **Reports**: daily digest, weekly and monthly reports, and an Overview of cost, late work and what waits for you.
-  - **Export and import**: download an enterprise as a zip from its Settings tab and import it as a new one, from
-    there or from the Enterprises page.
-  - **The top position decides for me**: a setting that lets the top of the chart decide what would reach you, so you
-    can run an enterprise by talking only to its CEO. Outside content, hires, keys, domains, sandbox and folders,
-    prices and terms and the front desk still come to you. It works fully with Trust along the chain on (Settings
-    warns and offers it); switching it off gives the waiting requests back to you.
-  - **Total autonomy**: one switch for an enterprise that runs itself. Each agent's own lead decides what it cannot,
-    and the top position has the last word (it needs a top position). What is free stays free. Still yours: outside
-    content, hires, prices and terms, and putting the front desk live. Questions stop at the top, and only the top
-    writes to you (`maxxing enterprise report-to-owner`): other messages are muted, except cards, reports and
-    budget alerts.
-  - **Follow-ups**: in total autonomy a delegated task nobody moves for 2 hours wakes the position that asked for it
-    (then again after longer and longer waits); the top also gets a daily list of open tasks. Outside total autonomy
-    set "stale_h" to turn them on. `maxxing enterprise tasks` lists the tasks.
-  - **Who is doing what**: a **Right now** strip on the enterprise page, a **Tasks** tab, and a **Delegations** card
-    on the agent page.
-  - **Less waiting for approval**: reports from the team in a trusted chain are no longer treated as outside text,
-    and the read-only commands `show`, `profile` and `tasks` never wait for approval (unless the run started from
-    outside content).
-  - **Review before hand-in**: name a reviewer position; a hand-in goes to it first, which approves it or asks for
-    changes; nobody can accept the task meanwhile.
-  - **Meetings**: a lead (or you) asks several positions for their view and gets the minutes.
-  - **Hiring**: a position can ask to hire (you accept, the agent is created; the card shows the role, the settings
-    and whether it came from outside); the Hire dialog sets the agent's name,
-    role, model and effort; seating an agent of a project not linked yet offers to link it.
-  - **Shared keys** given to every occupant, and **positions that run outside code**, which need a protected agent
-    with no key, on every run; an import resets shared keys.
-  - **Budget warnings** when agents' budgets exceed a department's ceiling, with **Split the ceiling**. With a Claude
-    subscription the amounts are estimates at API prices; the real limit is your quota.
-  - A lead delegates to its direct reports in any department without a request. Notification titles and Telegram
-    cards follow the server language. The position panel shows how much of the 3,000-character note is used.
-- **Agents: an effort level.** Each agent has an Effort setting (low to max) next to its model, passed to Claude Code.
 - **Voice: choose the microphone.** Settings -> Voice has a **Microphone** line: pick the microphone that records
   on this device (headset, USB microphone, the built-in one) instead of the one the browser picks. The choice stays
   in this browser; if that microphone is unplugged, the default one records and the choice comes back with it.

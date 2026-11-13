@@ -7,6 +7,110 @@ shown in the product. Newest first, same version headings as `CHANGELOG.md`.
 
 ## Unreleased
 
+- Enterprises, failed runs and resume. `agents.on_turn_end` calls `enterprise_flow.run_ended(session, ok, text)` for a
+  run that ended without success: the items of `<pos>.seen.jsonl` whose `run` is that session go back to the inbox (same
+  ids, no duplicate) with `attempt` and `not_before` (`RETRY_WAITS_S` 10 min, 30 min, 2 h; `_flush` skips items not yet
+  due); a 4th failure gives up and opens an escalation (lead, else owner) with the last error. Each requeue is a `note`
+  in the decision log. `POST /{e}/positions/{pos}/resume` and `maxxing enterprise resume SLUG POS|--all-failed` call
+  `enterprise_flow.resume_position` (item kind `followup`, ref `resume`, clears `not_before`); an agent turn is refused
+  unless it is the top position in total autonomy acting on its subtree. Web: Resume button in the position panel and
+  on failed cards.
+- Enterprises, total autonomy and follow-ups. Setting `zero_intervention` (bool, false, enterprise-wide, no department
+  override; `enterprises.SETTINGS`): `enterprises.setting` returns `ZERO_FORCED` (`autonomy` autonomous, `trust_chain`
+  and `top_decides` true) while it is on, stored values untouched; `GET /{e}` adds `effective`; saving it with top
+  `owner` is `400 needs_top`. `enterprise_policy.zero(slug)`; `decider` returns the requester's lead (the top itself
+  for the top, vacant or unavailable lead -> next ancestor -> top -> owner) for every category outside `TOP_NEVER`,
+  except `free` categories, which stay `free`; outside-started requests and safety requests still go to the owner.
+  Escalations: `_top_stop` and the climb never pass the top position (`enterprise_flow`), the owner only when the top
+  is unavailable. `enterprise_reports.notify_owner(..., always=False)` logs `owner_muted` and sends nothing in zero
+  mode unless the call has `actions` or `always=True` (reports, envelope alerts, hire failures, `report_to_owner`).
+  `enterprise_flow.report_to_owner` (CLI `report-to-owner`, `403 not_top` for any other position). The knowledge note
+  gains one paragraph in zero mode.
+  Trust: with the effective `trust_chain`, clean items (`_dirty`: no outside mark on the item or its task) going up are
+  delivered in the trusted prompt framed by `UP_FRAME`; a mixed batch is split (outside items alone).
+  `agents.run_settings` pre-allows `ENTERPRISE_READONLY` (`show`, `profile`, `tasks`) for a seated agent except in a
+  forced (outside) run and a front desk run; the commands must be alone on their line to match.
+  Follow-up: kind `followup` (a DOWN kind), `stale_hours` reads the validated setting `stale_h` (`null` default, 0..168;
+  unset: 2 in zero mode, off otherwise; `effective.stale_h` in `GET /{e}`); the tick wakes the requester of a quiet open
+  task, again after `stale_h * 2^n` (cap max(stale_h, 24 h); `flow.nudged[task] = {at, n}`, reset when the task moves),
+  skips tasks whose owner runs, cuts the list with "and N more", and in zero mode wakes the top once a day
+  (`flow.top_followup`) with the open tasks: a task marked outside is counted, never quoted. `_followups` has its own
+  `try` in the tick.
+  Outside marks: `done`, `block`, `review` take `outside` (the CLI passes the run's mark); the hand-in is marked outside
+  when the run was (`summary_outside` on the task keeps it through the review); `_dirty` also reads the item's session
+  environment. A mixed batch serves the group of the oldest item first. `tasks_view(hide_outside=)` and the CLI `tasks`
+  show `[outside content]` to a clean agent turn and narrow a sandboxed turn to its own position, lead and reports.
+  `report_to_owner(outside=)` tags the text and allows 6 messages an hour (`429 rate_limited`, `flow.reports`).
+  Items stopped at the top: `deliver(ref=)` keeps one copy per ref in an inbox (`esc:<id>`, `req:<id>`); `renewals`
+  doubles the wait (`RENEW_MAX` = 3) then the owner gets the card. Owner-level requests carry `for_owner` in zero mode
+  too (`_route(zero_on=False)`) and `release_top` gives them back once neither zero mode nor the top decides.
+  `notify_owner(always=True)` for hand-ins / blocks of owner or desk requested tasks, minutes of the owner's meetings,
+  desk insights and "allowed, the owner applies it". Moving or removing the top, or `top` = `owner`, clears
+  `zero_intervention` (`enterprises._zero_lost`). CLI `tasks [--mine] [--all] [--json]` (`tasks_view`, in `TURN_CMDS`).
+  Routes `GET /api/enterprises/{e}/tasks` and `/now` (`now_view`), see API.md. Web: "Total autonomy" switch (the three
+  forced controls show their effective value, disabled), `NowStrip`, `Tasks` tab, `Delegations` card on the agent page
+  (reads the enterprise bus topic).
+- Enterprises, improvements. Settings (`enterprises.SETTINGS`, validated): `top_decides`, `shared_keys`, `review_by`.
+  `enterprise_policy._owner_or_top` sends to the top position what `_route` would send to the owner, except
+  `TOP_NEVER` (`hire`, `hire_remove`, `profile_terms`, `desk_live`), outside-started requests and the safety requests;
+  the top may decide its own requests; a vacant or off top falls back to the owner. New category `hire` (payload
+  `title, department, reports_to, job, topic, name, role, model, effort`): `_hire` on Accept calls `add_position` then
+  `enterprises.hire_custom` and tells the requester. CLI: `request hire`, `review`, `meeting start|reply` (`TURN_CMDS`).
+  Flow: `review_by` puts a contributor's `done` in stage `review_pending` (kind `review`), `review()` sets `reviewed`
+  or `changes`; meetings in `meetings.json` (`start_meeting`, `reply_meeting`, deadline in the tick, default 4 h
+  `MEETING_H`, 168 h max; a lead invites its subtree, the top anyone), kinds `meeting` and `meeting_minutes`; routes
+  `GET /{e}/meetings[/{id}]`. A lead delegates to a direct report in any department without a request. Positions:
+  `untrusted_code` flag (PATCH), `untrusted_unfit()` (`not_sandboxed`, `holds_keys`), seat refused with `400
+  untrusted_unfit` (`reasons`), deliveries wait with that reason; `note_chars` / `note_cut`; payload keys
+  `sandbox_available`, `budget_warnings`; `POST /{e}/departments/{d}/split-budget` (equal share, step 0.05, through
+  `agents.update`); seat `409 project_not_linked` or body `link_project`; hire body `name, role, model, effort`.
+  `agents.run_settings` adds `enterprises.shared_keys_for(path)` (inside the envelopes, none for an `untrusted_code`
+  position, none in a desk turn). Agents: `effort` (`""|low|medium|high|xhigh|max`, `bad_effort`), `--effort` passed
+  to `claude`. Web: `settings_warnings` (Settings callout with a Trust switch), `hire` cards show the payload fields and
+  `outside` (`HireDetails`), `untrusted_unfit` reasons and blocked reason texts, mock updated. Notifications, Telegram cards and decision texts use `config` `language` (en/fr tables per module).
+- Enterprises (an org chart of agents above projects; off by default, config `enterprises_page`, needs
+  `agents_page`, no migration). Modules: `enterprises.py` (files, lookups, structure, `rev`, lock `enterprises`),
+  `enterprise_flow.py` (inboxes, deliveries, delegated tasks, escalations, the tick loop), `enterprise_policy.py`
+  (requests, grants, envelopes, communication, trust chain), `enterprise_reports.py` (digest, weekly, monthly,
+  Overview, owner notifications), `enterprise_knowledge.py` (knowledge cascade, profile), `enterprise_workers.py`,
+  `enterprise_desk.py` (front desk, insights), `enterprise_io.py` (export / import zip), `enterprise_templates.py`,
+  `cmd_enterprise.py` (`maxxing enterprise`, module docstring = command list), routes in `api/enterprises.py`,
+  `api/enterprise_flow.py`, `api/enterprise_policy.py`, `api/enterprise_profile.py`, `api/enterprise_reports.py`,
+  `api/enterprise_workers.py`, `api/enterprise_desk.py` (see API.md#enterprises). Files:
+  `<workspace>/enterprises/<slug>/{CLAUDE.md, enterprise.json, profile.json, files/}`, state
+  `<state>/enterprises/<slug>/`. Config: `enterprises_page` (Settings -> Features), `telegram.enterprise_threads`
+  (`{slug: {tid, name}}`). Bus topics `enterprises` and `enterprises:<slug>`; feed source `enterprises` (owner
+  cards, refs `enterprise:<slug>:<id>`). `agents.gate` has the reason `envelope` (and `busy`) from the department /
+  enterprise ceilings; `agents.run_settings` appends the cascade to the system note and lowers the per-run budget;
+  `agent_guard` allows the turn commands of `maxxing enterprise` as the caller's position, refuses the structure
+  ones, and hides the folders of enterprises an agent holds no seat in; `bodylimit` lists `/api/public/` (the desk
+  link, no session). Delegated tasks are entries of `tasks.json` with an `enterprise` sub-object (`{id, owner,
+  requester, parent, deliverable, stage, hops, outside}`). Agents carry `enterprise`, `position`, `reports_to` in
+  the data given to Office extension views. Skill `maxxing-enterprises`, user docs page
+  `docs/user/33-enterprises.md`. Front desk: `desk_page.py` serves `GET /desk/<token>` (static, strict CSP,
+  `frame-ancestors 'none'`); `GET .../desk` returns `unfit` and `public.path`; going live answers `400
+  desk_not_restricted` after `unprotected_occupants`; hourly caps (300 messages per enterprise, 1500 reads per
+  visitor). Export drops the desk link, `trust_chain` and `worker_template`; import lists `skipped`. Reserved position
+  ids, a department overrides `DEPT_SETTINGS` only, PATCH `grants` is validated, `blocked` position state. `request`
+  carries `--position/--job/--agent` (`edit_job`, `reseat`). The slow tickers run in a thread, `SERVER` gates the
+  delivery timers, `seat_of_worker` / `cost_today` count the workers' spending.
+  Hardening of the front desk and fixes: a desk turn runs in the `default` permission mode (the session is created with
+  it) and a deny-by-default `PreToolUse` hook (`agent_guard desk-hook`, `desk_decision`: one plain `maxxing enterprise
+  profile|route` command, no chaining, expansion or redirection; fails closed) refuses every other call, whatever
+  `--allowedTools` or the user's settings allow. Deleting a conversation (and retention) erases the visitor's text from
+  the desk agent's sessions (hard delete), its thread and the Claude Code transcript of each run; what stays is the
+  routed request (task text, lead's inbox); the `decisions.jsonl` line of a route carries no visitor text. `route` is
+  attributed to the desk position (`assign(..., sender=pos)`) while the desk position is the requester. `route` refuses the desk itself and a position that is not the head of its department; desk turns run with `--strict-mcp-config` and an empty server list (`no_mcp` in `run_settings`); the desk hook command fails closed (any boot error denies and exits 2) and has a 10 s timeout; an accept records `accepted_in` so an assign in the same run keeps the parent and hops; delivery runs start at the largest `hops` of their tasks (capped at `agents.MAX_DEPTH`); an import lists reserved position ids in `skipped`. Hand-ins make the
+  delivered tasks the default parent. The desk has its own global hourly cap (not evicted with the client keys).
+  Workers are retired when the feature is off (`tick_all` still runs the worker tick) and their cost is in the overview,
+  the chart and the dashboard card (`cost_today`, `ceiling_hit`). A budget-less agent under a ceiling gets at most
+  `UNBUDGETED_RUN_USD` (0.50) per run, passed as `--max-budget-usd`, so the run is cut there. Import resets
+  `autonomy`, `workers`, `communication` (with `allow`) and the `digest` / `weekly` / `monthly` switches to the
+  defaults and lists what was not default in `skipped`. Templates and card labels are English only. The public page
+  (`desk_page.py`) is built in `en` and `fr` (one hashed document each) and follows the server language. Web: the New
+  position dialog never derives a reserved id (`owner-role`) and has an editable id field; a Blocked position shows its
+  `blocked_reason` (card, list row, panel header).
+
 - Web, file viewer loaders: `features/files/skeletons.tsx` (`FileSkeleton({kind, preview})`: picture, PDF page,
   prose, table, numbered code lines, media, card; `CodeSkeleton` / `ProseSkeleton` / `MediaSkeleton` moved there
   from `viewers.tsx`), used by `Viewer.tsx` (probe and version pending), `FilePreview.tsx`, `pages/files/FileView.tsx`
@@ -279,109 +383,6 @@ shown in the product. Newest first, same version headings as `CHANGELOG.md`.
   (**the version's upgrade note must add it to existing workspaces**). Tests: `test_team.py::test_cli_send_*`,
   `test_a_write_from_another_process_refreshes_the_pages`.
 
-- Enterprises, failed runs and resume. `agents.on_turn_end` calls `enterprise_flow.run_ended(session, ok, text)` for a
-  run that ended without success: the items of `<pos>.seen.jsonl` whose `run` is that session go back to the inbox (same
-  ids, no duplicate) with `attempt` and `not_before` (`RETRY_WAITS_S` 10 min, 30 min, 2 h; `_flush` skips items not yet
-  due); a 4th failure gives up and opens an escalation (lead, else owner) with the last error. Each requeue is a `note`
-  in the decision log. `POST /{e}/positions/{pos}/resume` and `maxxing enterprise resume SLUG POS|--all-failed` call
-  `enterprise_flow.resume_position` (item kind `followup`, ref `resume`, clears `not_before`); an agent turn is refused
-  unless it is the top position in total autonomy acting on its subtree. Web: Resume button in the position panel and
-  on failed cards.
-- Enterprises, total autonomy and follow-ups. Setting `zero_intervention` (bool, false, enterprise-wide, no department
-  override; `enterprises.SETTINGS`): `enterprises.setting` returns `ZERO_FORCED` (`autonomy` autonomous, `trust_chain`
-  and `top_decides` true) while it is on, stored values untouched; `GET /{e}` adds `effective`; saving it with top
-  `owner` is `400 needs_top`. `enterprise_policy.zero(slug)`; `decider` returns the requester's lead (the top itself
-  for the top, vacant or unavailable lead -> next ancestor -> top -> owner) for every category outside `TOP_NEVER`,
-  except `free` categories, which stay `free`; outside-started requests and safety requests still go to the owner.
-  Escalations: `_top_stop` and the climb never pass the top position (`enterprise_flow`), the owner only when the top
-  is unavailable. `enterprise_reports.notify_owner(..., always=False)` logs `owner_muted` and sends nothing in zero
-  mode unless the call has `actions` or `always=True` (reports, envelope alerts, hire failures, `report_to_owner`).
-  `enterprise_flow.report_to_owner` (CLI `report-to-owner`, `403 not_top` for any other position). The knowledge note
-  gains one paragraph in zero mode.
-  Trust: with the effective `trust_chain`, clean items (`_dirty`: no outside mark on the item or its task) going up are
-  delivered in the trusted prompt framed by `UP_FRAME`; a mixed batch is split (outside items alone).
-  `agents.run_settings` pre-allows `ENTERPRISE_READONLY` (`show`, `profile`, `tasks`) for a seated agent except in a
-  forced (outside) run and a front desk run; the commands must be alone on their line to match.
-  Follow-up: kind `followup` (a DOWN kind), `stale_hours` reads the validated setting `stale_h` (`null` default, 0..168;
-  unset: 2 in zero mode, off otherwise; `effective.stale_h` in `GET /{e}`); the tick wakes the requester of a quiet open
-  task, again after `stale_h * 2^n` (cap max(stale_h, 24 h); `flow.nudged[task] = {at, n}`, reset when the task moves),
-  skips tasks whose owner runs, cuts the list with "and N more", and in zero mode wakes the top once a day
-  (`flow.top_followup`) with the open tasks: a task marked outside is counted, never quoted. `_followups` has its own
-  `try` in the tick.
-  Outside marks: `done`, `block`, `review` take `outside` (the CLI passes the run's mark); the hand-in is marked outside
-  when the run was (`summary_outside` on the task keeps it through the review); `_dirty` also reads the item's session
-  environment. A mixed batch serves the group of the oldest item first. `tasks_view(hide_outside=)` and the CLI `tasks`
-  show `[outside content]` to a clean agent turn and narrow a sandboxed turn to its own position, lead and reports.
-  `report_to_owner(outside=)` tags the text and allows 6 messages an hour (`429 rate_limited`, `flow.reports`).
-  Items stopped at the top: `deliver(ref=)` keeps one copy per ref in an inbox (`esc:<id>`, `req:<id>`); `renewals`
-  doubles the wait (`RENEW_MAX` = 3) then the owner gets the card. Owner-level requests carry `for_owner` in zero mode
-  too (`_route(zero_on=False)`) and `release_top` gives them back once neither zero mode nor the top decides.
-  `notify_owner(always=True)` for hand-ins / blocks of owner or desk requested tasks, minutes of the owner's meetings,
-  desk insights and "allowed, the owner applies it". Moving or removing the top, or `top` = `owner`, clears
-  `zero_intervention` (`enterprises._zero_lost`). CLI `tasks [--mine] [--all] [--json]` (`tasks_view`, in `TURN_CMDS`).
-  Routes `GET /api/enterprises/{e}/tasks` and `/now` (`now_view`), see API.md. Web: "Total autonomy" switch (the three
-  forced controls show their effective value, disabled), `NowStrip`, `Tasks` tab, `Delegations` card on the agent page
-  (reads the enterprise bus topic).
-- Enterprises, improvements. Settings (`enterprises.SETTINGS`, validated): `top_decides`, `shared_keys`, `review_by`.
-  `enterprise_policy._owner_or_top` sends to the top position what `_route` would send to the owner, except
-  `TOP_NEVER` (`hire`, `hire_remove`, `profile_terms`, `desk_live`), outside-started requests and the safety requests;
-  the top may decide its own requests; a vacant or off top falls back to the owner. New category `hire` (payload
-  `title, department, reports_to, job, topic, name, role, model, effort`): `_hire` on Accept calls `add_position` then
-  `enterprises.hire_custom` and tells the requester. CLI: `request hire`, `review`, `meeting start|reply` (`TURN_CMDS`).
-  Flow: `review_by` puts a contributor's `done` in stage `review_pending` (kind `review`), `review()` sets `reviewed`
-  or `changes`; meetings in `meetings.json` (`start_meeting`, `reply_meeting`, deadline in the tick, default 4 h
-  `MEETING_H`, 168 h max; a lead invites its subtree, the top anyone), kinds `meeting` and `meeting_minutes`; routes
-  `GET /{e}/meetings[/{id}]`. A lead delegates to a direct report in any department without a request. Positions:
-  `untrusted_code` flag (PATCH), `untrusted_unfit()` (`not_sandboxed`, `holds_keys`), seat refused with `400
-  untrusted_unfit` (`reasons`), deliveries wait with that reason; `note_chars` / `note_cut`; payload keys
-  `sandbox_available`, `budget_warnings`; `POST /{e}/departments/{d}/split-budget` (equal share, step 0.05, through
-  `agents.update`); seat `409 project_not_linked` or body `link_project`; hire body `name, role, model, effort`.
-  `agents.run_settings` adds `enterprises.shared_keys_for(path)` (inside the envelopes, none for an `untrusted_code`
-  position, none in a desk turn). Agents: `effort` (`""|low|medium|high|xhigh|max`, `bad_effort`), `--effort` passed
-  to `claude`. Web: `settings_warnings` (Settings callout with a Trust switch), `hire` cards show the payload fields and
-  `outside` (`HireDetails`), `untrusted_unfit` reasons and blocked reason texts, mock updated. Notifications, Telegram cards and decision texts use `config` `language` (en/fr tables per module).
-- Enterprises (an org chart of agents above projects; off by default, config `enterprises_page`, needs
-  `agents_page`, no migration). Modules: `enterprises.py` (files, lookups, structure, `rev`, lock `enterprises`),
-  `enterprise_flow.py` (inboxes, deliveries, delegated tasks, escalations, the tick loop), `enterprise_policy.py`
-  (requests, grants, envelopes, communication, trust chain), `enterprise_reports.py` (digest, weekly, monthly,
-  Overview, owner notifications), `enterprise_knowledge.py` (knowledge cascade, profile), `enterprise_workers.py`,
-  `enterprise_desk.py` (front desk, insights), `enterprise_io.py` (export / import zip), `enterprise_templates.py`,
-  `cmd_enterprise.py` (`maxxing enterprise`, module docstring = command list), routes in `api/enterprises.py`,
-  `api/enterprise_flow.py`, `api/enterprise_policy.py`, `api/enterprise_profile.py`, `api/enterprise_reports.py`,
-  `api/enterprise_workers.py`, `api/enterprise_desk.py` (see API.md#enterprises). Files:
-  `<workspace>/enterprises/<slug>/{CLAUDE.md, enterprise.json, profile.json, files/}`, state
-  `<state>/enterprises/<slug>/`. Config: `enterprises_page` (Settings -> Features), `telegram.enterprise_threads`
-  (`{slug: {tid, name}}`). Bus topics `enterprises` and `enterprises:<slug>`; feed source `enterprises` (owner
-  cards, refs `enterprise:<slug>:<id>`). `agents.gate` has the reason `envelope` (and `busy`) from the department /
-  enterprise ceilings; `agents.run_settings` appends the cascade to the system note and lowers the per-run budget;
-  `agent_guard` allows the turn commands of `maxxing enterprise` as the caller's position, refuses the structure
-  ones, and hides the folders of enterprises an agent holds no seat in; `bodylimit` lists `/api/public/` (the desk
-  link, no session). Delegated tasks are entries of `tasks.json` with an `enterprise` sub-object (`{id, owner,
-  requester, parent, deliverable, stage, hops, outside}`). Agents carry `enterprise`, `position`, `reports_to` in
-  the data given to Office extension views. Skill `maxxing-enterprises`, user docs page
-  `docs/user/33-enterprises.md`. Front desk: `desk_page.py` serves `GET /desk/<token>` (static, strict CSP,
-  `frame-ancestors 'none'`); `GET .../desk` returns `unfit` and `public.path`; going live answers `400
-  desk_not_restricted` after `unprotected_occupants`; hourly caps (300 messages per enterprise, 1500 reads per
-  visitor). Export drops the desk link, `trust_chain` and `worker_template`; import lists `skipped`. Reserved position
-  ids, a department overrides `DEPT_SETTINGS` only, PATCH `grants` is validated, `blocked` position state. `request`
-  carries `--position/--job/--agent` (`edit_job`, `reseat`). The slow tickers run in a thread, `SERVER` gates the
-  delivery timers, `seat_of_worker` / `cost_today` count the workers' spending.
-  Hardening of the front desk and fixes: a desk turn runs in the `default` permission mode (the session is created with
-  it) and a deny-by-default `PreToolUse` hook (`agent_guard desk-hook`, `desk_decision`: one plain `maxxing enterprise
-  profile|route` command, no chaining, expansion or redirection; fails closed) refuses every other call, whatever
-  `--allowedTools` or the user's settings allow. Deleting a conversation (and retention) erases the visitor's text from
-  the desk agent's sessions (hard delete), its thread and the Claude Code transcript of each run; what stays is the
-  routed request (task text, lead's inbox); the `decisions.jsonl` line of a route carries no visitor text. `route` is
-  attributed to the desk position (`assign(..., sender=pos)`) while the desk position is the requester. `route` refuses the desk itself and a position that is not the head of its department; desk turns run with `--strict-mcp-config` and an empty server list (`no_mcp` in `run_settings`); the desk hook command fails closed (any boot error denies and exits 2) and has a 10 s timeout; an accept records `accepted_in` so an assign in the same run keeps the parent and hops; delivery runs start at the largest `hops` of their tasks (capped at `agents.MAX_DEPTH`); an import lists reserved position ids in `skipped`. Hand-ins make the
-  delivered tasks the default parent. The desk has its own global hourly cap (not evicted with the client keys).
-  Workers are retired when the feature is off (`tick_all` still runs the worker tick) and their cost is in the overview,
-  the chart and the dashboard card (`cost_today`, `ceiling_hit`). A budget-less agent under a ceiling gets at most
-  `UNBUDGETED_RUN_USD` (0.50) per run, passed as `--max-budget-usd`, so the run is cut there. Import resets
-  `autonomy`, `workers`, `communication` (with `allow`) and the `digest` / `weekly` / `monthly` switches to the
-  defaults and lists what was not default in `skipped`. Templates and card labels are English only. The public page
-  (`desk_page.py`) is built in `en` and `fr` (one hashed document each) and follows the server language. Web: the New
-  position dialog never derives a reserved id (`owner-role`) and has an editable id field; a Blocked position shows its
-  `blocked_reason` (card, list row, panel header).
 - Agents: `agent_templates.fields()` sets `sandbox: True` for every template that reads outside text: a webhook, a
   mailbox (as before) or a web tool pre-allowed in `allowed_tools` (`reads_web()`: `Bash(curl…)`, `WebFetch`,
   `WebSearch`), i.e. `sales`, `orders`, `watch`, `writer`, `uptime` too. Without it `Bash(curl:*)` ran unsandboxed
