@@ -2,12 +2,12 @@
 import * as React from 'react'
 import { Link } from 'react-router'
 import { useQueryClient } from '@tanstack/react-query'
-import { Building2, Settings2 } from 'lucide-react'
+import { Building2, CircleAlert, Hourglass, RotateCw, Settings2 } from 'lucide-react'
 import { useT, type TKey } from '@/i18n'
 import { errorMessage, isApiError } from '@/lib/api'
 import { entKeys, useResumePosition, usePatchPosition, useSettings, useWorkspace } from '@/lib/queries'
 import type { Enterprise, Position, PositionPatch, PositionState } from '@/lib/types'
-import { Button, EmptyState, confirm, toast, type DotTone } from '@/components/ui'
+import { Button, EmptyState, Sensitive, confirm, toast, type DotTone } from '@/components/ui'
 import { Page } from '@/components/shell/Page'
 import { OUTFIT } from '@/features/agents/Avatar'
 import { useProjectColorOf } from '@/features/agents/layout'
@@ -200,7 +200,27 @@ export function ResumeButton({ enterprise, position: p, className }: { enterpris
       onClick={() => resume.mutate({ id: enterprise, pos: p.id }, { onSuccess: () => toast.success(t('ent.resume.done')) })}
       data-testid="position-resume"
     >
-      {t('ent.resume')}
+      <RotateCw /> {t('ent.resume')}
     </Button>
+  )
+}
+
+/** A failed or blocked position as one card, like a session's stopped turn: what happened, why, and Resume. */
+export function StoppedCard({ enterprise, position: p }: { enterprise: string; position: Position }) {
+  const t = useT()
+  if (p.state !== 'failed' && p.state !== 'blocked') return null
+  const failed = p.state === 'failed'
+  const Icon = failed ? CircleAlert : Hourglass
+  return (
+    <div role="status" data-testid="position-stopped" className="mx-3 mt-3 flex items-start gap-2.5 rounded-lg border bg-muted/30 px-3 pt-2.5 pb-2 text-xs">
+      <Icon className={cn('mt-0.5 size-4 shrink-0', failed ? 'text-destructive' : 'text-warning')} />
+      <div className="min-w-0 flex-1">
+        <div className="text-[13px] leading-5 font-medium text-foreground">{failed ? t('ent.stopped.failed') : t('ent.stopped.blocked')}</div>
+        <p className="mt-0.5 leading-5 text-muted-foreground [overflow-wrap:anywhere]">
+          {p.blocked_reason ? <Sensitive>{p.blocked_reason}</Sensitive> : failed ? t('ent.stopped.failed.text') : t('ent.stopped.blocked.text')}
+        </p>
+        <ResumeButton enterprise={enterprise} position={p} className="mt-2" />
+      </div>
+    </div>
   )
 }
