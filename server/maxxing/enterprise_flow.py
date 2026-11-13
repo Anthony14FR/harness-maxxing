@@ -44,6 +44,7 @@ MEETING_H = 4.0                                     # default hours before a mee
 MEETING_KEEP = 100
 RESUME_TEXT = ("Resume your open tasks: run `maxxing enterprise tasks --mine`, then finish, hand in, block or "
                "escalate each one.")
+BUSY_RETRY_S = 20.0                                 # seconds before a delivery that found its occupant busy is tried again
 RETRY_WAITS_S = (600.0, 1800.0, 7200.0)             # waits before the 1st, 2nd and 3rd re-delivery of what a failed run took
 TEXTS = {                                           # owner-facing notification texts (language setting, English fallback)
     "esc_title": {"en": "{name}: {who} needs an answer", "fr": "{name} : {who} attend une réponse"},
@@ -60,6 +61,12 @@ TEXTS = {                                           # owner-facing notification 
                           "send it back with `maxxing enterprise assign {owner} \"notes\" --task {id}`.",
                     "fr": "Livrable de {who} pour \"{title}\" : {summary}\nAcceptez-le avec `maxxing enterprise done {id}`, "
                           "ou renvoyez-le avec `maxxing enterprise assign {owner} \"notes\" --task {id}`."},
+    "reviewed_body": {"en": "Reviewed and approved by {reviewer}: \"{title}\" from {who}: {summary}\nThe task stays open until you "
+                            "decide: accept it with `maxxing enterprise done {id}`, or send it back with `maxxing enterprise "
+                            "assign {owner} \"notes\" --task {id}`.",
+                      "fr": "Relu et approuvé par {reviewer} : \"{title}\" de {who} : {summary}\nLa tâche reste ouverte tant que vous "
+                            "n'avez pas décidé : acceptez-la avec `maxxing enterprise done {id}`, ou renvoyez-la avec "
+                            "`maxxing enterprise assign {owner} \"notes\" --task {id}`."},
     "blocked_body": {"en": "Blocked: \"{title}\" ({who}): {reason}", "fr": "Bloquée : \"{title}\" ({who}) : {reason}"},
     "wait_esc": {"en": "{n} deliveries have waited for {who} ({why}).", "fr": "{n} envois attendent {who} ({why})."},
     "outside_tag": {"en": "[from outside text] ", "fr": "[texte venu de l'extérieur] "},
@@ -387,12 +394,12 @@ def _debounce(path: str) -> float:
         return 0.0
 
 
-def _schedule(slug: str, pos: str) -> None:
-    """The quick path: a timer in the server for the end of the debounce (the tick catches up when it is lost)."""
+def _schedule(slug: str, pos: str, retry: float | None = None) -> None:
+    """The quick path: a timer in the server for the end of the debounce, or `retry` seconds (the tick catches up when lost)."""
     if not SERVER or os.environ.get("MAXXING_ENTERPRISE_TICK", "1") == "0" or not enterprises.feature_on():
         return
     p = enterprises.position(slug, pos)
-    delay = _debounce(p["agent"]) if p and p.get("agent") else 0.0
+    delay = retry if retry is not None else _debounce(p["agent"]) if p and p.get("agent") else 0.0
     key = (slug, pos)
     with _tlock:
         if key in _timers:
@@ -501,6 +508,7 @@ def _flush(slug: str, pos: str, now: float) -> str:
         r = agents.fire(path, trigger=f"enterprise:{slug}:{sender}", text=text, prompt=prompt,
                         source=f"enterprise {_name(slug)}", depth=depth, wait=True)
         if not r.get("started"):
+            _schedule(slug, pos, BUSY_RETRY_S)          # a run is going: look again soon, no run end hook flushes the inbox
             return _wait(slug, pos, now, r.get("reason") or "busy")
         ids = {i["id"] for i in items}
         run = (r.get("session") or {}).get("id", "") if isinstance(r.get("session"), dict) else ""
@@ -510,6 +518,9 @@ def _flush(slug: str, pos: str, now: float) -> str:
             f2 = _inbox_dir(slug) / f"{pos}.seen.jsonl"
             _write(f2, (_read(f2) + [{**i, "run": run} for i in items])[-SEEN_KEEP:])
         _unwait(slug, pos)
+        left = bool(_read(_inbox_file(slug, pos)))
+    if left:
+        _schedule(slug, pos, BUSY_RETRY_S)              # items that arrived or stayed behind (split batch, retry time) go next
     enterprises.log(slug, "run", f"{len(items)} deliveries handed to {pos} in one run", by="server", position=pos,
                     session=run)
     enterprises.invalidate(slug)
@@ -962,10 +973,11 @@ def review(slug: str, pos: str, task_id: str, decision: str, notes: str = "", *,
     if decision == "approve":
         row = _task_call(_tasks().update_task, task_id, {"enterprise": {**e, "stage": "reviewed", "reviewed_by": pos,
                                                                          "review_notes": notes}})
-        _hand_in(slug, {**e, "stage": "reviewed"}, t, owner, task_id,
-                 (e.get("summary") or "") + (f" (reviewed by {_label(slug, pos)}: {notes})" if notes else
-                                             f" (reviewed by {_label(slug, pos)})"),
-                 bool(e.get("summary_outside")) or bool(outside))
+        _tell_requester(slug, e, "handin", _t("reviewed_body", reviewer=_label(slug, pos), who=_label(slug, owner),
+                                              title=t["title"], id=task_id, owner=owner or pos, summary=(e.get("summary") or "") +
+                                              (f" (review notes: {notes})" if notes else "")),
+                        owner, task_id, _t("handin_title"),
+                        bool(e.get("outside")) or bool(e.get("summary_outside")) or bool(outside))
         enterprises.log(slug, "review", f"{_label(slug, pos)} approves: {t['title']}", by=pos, position=owner,
                         task=task_id, session=session)
     else:
@@ -1340,7 +1352,8 @@ def _followups(slug: str, now: float) -> None:
                 n = 0                                   # the task moved since: the back-off starts again
             if now - upd < hours * 3600 or now - at < min(hours * 3600 * 2 ** n, cap):
                 continue
-            if _running_on(slug, e.get("owner") or ""):
+            waits_on = req if e.get("stage") in ("review", "reviewed") else e.get("owner") or ""   # a hand-in waits for the requester
+            if _running_on(slug, waits_on):
                 continue
             count[t["id"]] = n + 1
             due.setdefault((req, bool(e.get("outside"))), []).append((t["id"], _task_line(slug, t, e, now)))

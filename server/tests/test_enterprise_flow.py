@@ -620,6 +620,7 @@ def test_review_approve_then_the_requester_hears_it(ent):
     assert r["enterprise"]["stage"] == "reviewed"
     (h,) = [i for i in _inbox("ceo") if i["kind"] == "handin"]
     assert "v1 in drafts/" in h["text"] and "good" in h["text"]
+    assert "maxxing enterprise done" in h["text"] and "reviewed" in h["text"].lower() and "assign writer" in h["text"]
     with pytest.raises(EnterpriseError) as x:
         flow.review(S, "editor", t["id"], "approve")
     assert x.value.status == 409
@@ -1099,3 +1100,45 @@ def test_resume_makes_waiting_retries_due(ent):
     _attempt("writer", 1)
     assert ent.post(f"{E}/{S}/positions/writer/resume").status_code == 200
     assert all("not_before" not in i for i in _raw("writer"))
+
+
+def test_stale_h_also_wakes_the_requester_of_a_reviewed_task(ent, policy):
+    _review_on()
+    assert ent.patch(f"{E}/{S}", json={"settings": {"stale_h": 4}}).status_code == 200
+    t = flow.assign(S, "ceo", "writer", "Draft")
+    flow.done(S, "writer", t["id"], "v1")
+    flow.review(S, "editor", t["id"], "approve")
+    assert _tasks_stage(t["id"]) == "reviewed"
+    t0 = time.time()
+    flow.tick(t0 + 5 * 3600)
+    (f,) = [i for i in _inbox("ceo") + flow.seen(S, "ceo") if i["kind"] == "followup"]
+    assert t["id"] in f["text"] and "reviewed" in f["text"]
+
+
+def _tasks_stage(task_id):
+    return flow._load_task(S, task_id)[1].get("stage")
+
+
+def test_a_delivery_that_found_its_occupant_busy_is_retried_soon(ent, monkeypatch):
+    asked = []
+    monkeypatch.setattr(flow, "_schedule", lambda slug, pos, retry=None: asked.append((pos, retry)))
+    monkeypatch.setattr(agents, "fire", lambda *a, **k: {"started": False, "reason": "busy"})
+    flow.deliver(S, "writer", "note", "NOTOOL hi", sender="ceo")
+    asked.clear()
+    assert flow._flush(S, "writer", time.time() + 1) == "waiting"
+    assert asked == [("writer", flow.BUSY_RETRY_S)]
+
+
+def test_items_left_behind_by_a_run_are_flushed_after_it(ent, monkeypatch):
+    asked = []
+    real = flow._schedule
+    flow.deliver(S, "writer", "note", "NOTOOL one", sender="ceo")
+    flow.deliver(S, "writer", "note", "NOTOOL later", sender="ceo")
+    f = flow._inbox_file(S, "writer")
+    rows = flow._read(f)
+    rows[1]["not_before"] = time.time() + 9999
+    flow._write(f, rows)
+    monkeypatch.setattr(flow, "_schedule", lambda slug, pos, retry=None: asked.append((pos, retry)))
+    assert flow._flush(S, "writer", time.time() + 1) == "started"
+    assert asked == [("writer", flow.BUSY_RETRY_S)] and len(_inbox("writer")) == 1
+    assert real
