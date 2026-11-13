@@ -7,6 +7,11 @@ shown in the product. Newest first, same version headings as `CHANGELOG.md`.
 
 ## Unreleased
 
+- Enterprises, flow fixes. `_flush` schedules a retry timer (`BUSY_RETRY_S` 20 s, server only) when `agents.fire` did not
+  start (busy) and when items remain in the inbox after a run took its batch (no run-end hook exists for success; the tick
+  stays the fallback). `review(approve)` tells the requester with the new `reviewed_body` text (accept with `done` or send
+  back with `assign --task`). `_followups` (stale_h) already covered every open task incl. stage `review`/`reviewed`; for
+  those stages the skip-if-running check now looks at the requester instead of the owner.
 - Enterprises, failed runs and resume. `agents.on_turn_end` calls `enterprise_flow.run_ended(session, ok, text)` for a
   run that ended without success: the items of `<pos>.seen.jsonl` whose `run` is that session go back to the inbox (same
   ids, no duplicate) with `attempt` and `not_before` (`RETRY_WAITS_S` 10 min, 30 min, 2 h; `_flush` skips items not yet
@@ -116,6 +121,9 @@ shown in the product. Newest first, same version headings as `CHANGELOG.md`.
   from `viewers.tsx`), used by `Viewer.tsx` (probe and version pending), `FilePreview.tsx`, `pages/files/FileView.tsx`
   and `HtmlView`. `.mx-file-wait` (`globals.css`): fades in after 120 ms, one `::after` band sweeps by transform
   (`mx-sweep`); bones are `bg-muted-foreground/15` (visible in the dark theme).
+
+- Approvals: a `pending` request past `expires` + `OVERDUE_GRACE_S` (10 s) is marked `expired` by `scan` and by
+  `approvals.pending()` (previously only orphans of a stopped session and `agent_change` were).
 
 ## 2.0.0-alpha.148 - 2026-11-13
 

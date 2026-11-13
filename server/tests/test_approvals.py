@@ -556,3 +556,16 @@ def test_mode_ask_is_accepted_everywhere(client, topic):
     assert client.patch("/api/workspace/projects/acme/topics/blog", json={"permission_mode": "ask"}).status_code == 200
     from maxxing.sessions import spawn
     assert spawn.permission_args("ask") == (["--permission-mode", "default"], {})
+
+
+def test_timed_out_request_of_a_running_turn_is_expired_on_read(client, topic, mx, monkeypatch):
+    from maxxing import approval_mcp, approvals
+    monkeypatch.setattr(approvals, "_running", lambda sid: True)
+    folder = approvals.folder()
+    folder.mkdir(parents=True, exist_ok=True)
+    rid = "aabbccdd00112233"
+    approval_mcp.write_atomic(folder / f"{rid}.json", {
+        "id": rid, "session": "s1", "agent_path": "", "tool": "Bash", "input": {"command": "ls"},
+        "at": time.time() - 100, "expires": time.time() - 60, "status": "pending"})
+    assert approvals.pending() == []
+    assert json.loads((folder / f"{rid}.json").read_text())["status"] == "expired"

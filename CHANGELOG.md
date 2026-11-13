@@ -13,7 +13,10 @@ New:
   [Show me](#show:enterprises)
   - **Failed runs retry**: when a run is cut or fails, its deliveries come back to the position's inbox and are tried
     again later; after three tries the lead (or you) is told. A **Resume** button and `maxxing enterprise resume`
-    tell a position to go through its open tasks again.
+    tell a position to go through its open tasks again. A delivery that found its position busy is now tried again
+    within seconds, not at the next sweep.
+  - **Reviewed work gets closed**: once the reviewer approves a hand-in, the requester is told to accept it or send it
+    back, and it is woken again if it sits there too long.
   - **Front desk**: a labelled AI assistant on a public chat link answers customers and passes requests to the right
     team.
   - **Reports**: daily digest, weekly and monthly reports, and an Overview of cost, late work and what waits for you.
@@ -55,6 +58,9 @@ Changed:
   Files page), the viewer no longer shows the same grey bars for everything: a picture frame for an image, a page for
   a PDF, a page of text for Markdown, a table for a CSV, numbered lines for code, a player for a video or a sound, a
   card for the rest. A light band sweeps over it, and a file that opens at once no longer flashes a loader.
+
+Fixed:
+- **Timed-out approval requests no longer stay "pending".** They are marked expired, and lists and counters stop showing them.
 
 ## 2.0.0-alpha.148 - 2026-11-13
 

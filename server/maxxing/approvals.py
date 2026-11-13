@@ -25,6 +25,7 @@ ID_RE = re.compile(r"^[0-9a-f]{16}$")
 DECISIONS = ("allow", "deny")
 MESSAGE_MAX = 1000
 KEEP_S = 86400.0                  # decided requests stay this long
+OVERDUE_GRACE_S = 10.0            # a pending request this long past its `expires` is marked expired by any reader
 ORPHAN_GRACE_S = 15.0             # a pending request of a session that is not running is expired after this
 SHORT_MAX = 160
 
@@ -179,7 +180,31 @@ def _all() -> list[dict]:
 
 def pending(session: str | None = None) -> list[dict]:
     """Requests waiting for an answer (of one session when given), oldest first."""
-    return [public(d) for d in _all() if d.get("status") == "pending" and (not session or d.get("session") == session)]
+    now, out = time.time(), []
+    for d in _all():
+        if d.get("status") == "pending" and _overdue(d, now):
+            d = _expire_file(d, now)            # a read cleans what timed out without anyone marking it
+        if d.get("status") == "pending" and (not session or d.get("session") == session):
+            out.append(public(d))
+    return out
+
+
+def _overdue(d: dict, now: float) -> bool:
+    """A pending request past its `expires` (plus a grace for the waiting process to mark it `timeout` itself)."""
+    exp = d.get("expires")
+    return isinstance(exp, (int, float)) and now > float(exp) + OVERDUE_GRACE_S
+
+
+def _expire_file(d: dict, now: float) -> dict:
+    with _lock:
+        cur = approval_mcp.read(_file(d["id"])) or d
+        if cur.get("status") == "pending":
+            cur = {**cur, "status": "expired", "decided_at": now}
+            try:
+                approval_mcp.write_atomic(_file(d["id"]), cur)
+            except OSError:
+                pass
+    return cur
 
 
 def _count(items: list[dict]) -> dict[str, int]:
@@ -424,13 +449,10 @@ def scan(force: bool = False) -> bool:
         rid, st = d["id"], d.get("status")
         change = d.get("kind") == "agent_change"         # outlives its turn, until it expires (agents.request_change)
         if st == "pending" and (now > float(d.get("expires") or now) if change else
+                                _overdue(d, now) or
                                 now - float(d.get("at") or now) > ORPHAN_GRACE_S and not _running(d.get("session") or "")):
-            with _lock:                         # its turn is gone: nobody waits for it (unless answered meanwhile)
-                cur = approval_mcp.read(_file(rid)) or d
-                if cur.get("status") == "pending":
-                    cur = {**cur, "status": "expired", "decided_at": now}
-                    approval_mcp.write_atomic(_file(rid), cur)
-            d, st = cur, cur.get("status")
+            d = _expire_file(d, now)            # its turn is gone or it timed out: nobody waits for it
+            st = d.get("status")
         final.append(d)
         prev = _seen.get(rid)
         if prev == st:
