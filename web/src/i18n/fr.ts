@@ -3245,6 +3245,7 @@ export const fr: Record<keyof typeof en, string> = {
   'paste.asText': 'Coller en texte',
   // ---- Agents (Réglages -> Fonctionnalités -> agents_page)
   'nav.agents': 'Agents',
+  'nav.enterprises': 'Entreprises',
   'crons.agentHint': 'agent',
   'where.agent': 'Agent',
   'where.agentHelp': "Cette session tourne dans le dossier d'un agent : Claude y travaille avec le rôle et la mémoire de l'agent, plus ceux du topic, du projet et du niveau global.",

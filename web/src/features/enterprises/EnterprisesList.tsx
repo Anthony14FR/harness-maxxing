@@ -54,7 +54,7 @@ export function EnterprisesList() {
               <Link to={enterpriseRoute(x.id)} className="block rounded-xl outline-none focus-visible:ring-2 focus-visible:ring-ring" data-testid="enterprise-card">
                 <Card className="h-full gap-3 p-[var(--pad-card)] transition-colors hover:bg-accent">
                   <div className="flex items-center gap-3">
-                    <span className="flex size-10 shrink-0 items-center justify-center rounded-lg border bg-muted/60 text-lg">
+                    <span className="flex size-10 shrink-0 items-center justify-center rounded-lg border bg-muted text-lg">
                       {x.emoji || <Building2 className="size-5 text-muted-foreground" strokeWidth={1.6} />}
                     </span>
                     <div className="grid min-w-0">
