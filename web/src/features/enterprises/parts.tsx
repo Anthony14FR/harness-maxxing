@@ -212,7 +212,7 @@ export function StoppedCard({ enterprise, position: p }: { enterprise: string; p
   const failed = p.state === 'failed'
   const Icon = failed ? CircleAlert : Hourglass
   return (
-    <div role="status" data-testid="position-stopped" className="mx-3 mt-3 flex items-start gap-2.5 rounded-lg border bg-muted/30 px-3 pt-2.5 pb-2 text-xs">
+    <div role="status" data-testid="position-stopped" className="mx-3 mt-3 flex items-start gap-2.5 rounded-lg border bg-fill-1 px-3 pt-2.5 pb-2 text-xs">
       <Icon className={cn('mt-0.5 size-4 shrink-0', failed ? 'text-destructive' : 'text-warning')} />
       <div className="min-w-0 flex-1">
         <div className="text-[13px] leading-5 font-medium text-foreground">{failed ? t('ent.stopped.failed') : t('ent.stopped.blocked')}</div>

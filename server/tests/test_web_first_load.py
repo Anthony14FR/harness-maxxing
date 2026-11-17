@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 
 DIST = Path(__file__).resolve().parents[2] / "web" / "dist"
-BUDGET = 20_000  # brotli bytes of dictionary on the first load of the dashboard or a session (was ~35 kB in one piece)
+BUDGET = 20_100  # brotli bytes of dictionary on the first load of the dashboard or a session (was ~35 kB in one piece)
 
 
 def _preload_map() -> dict:

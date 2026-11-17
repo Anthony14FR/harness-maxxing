@@ -112,7 +112,7 @@ function TopCard({ top, over, cardProps }: { top: Position | undefined; over: st
   const youOver = over === null
   if (!top)
     return (
-      <div data-pos="" data-testid="chart-owner" className={cn('flex items-center gap-2.5 rounded-xl border bg-muted/40 p-3 select-none', youOver && 'border-primary ring-2 ring-primary/40')}>
+      <div data-pos="" data-testid="chart-owner" className={cn('flex items-center gap-2.5 rounded-xl border bg-muted p-3 select-none', youOver && 'border-primary ring-2 ring-primary/40')}>
         <span className="flex size-8 shrink-0 items-center justify-center rounded-md bg-muted text-muted-foreground">
           <UsersRound className="size-4" strokeWidth={1.6} />
         </span>
@@ -123,7 +123,7 @@ function TopCard({ top, over, cardProps }: { top: Position | undefined; over: st
       </div>
     )
   return (
-    <div data-pos="" data-testid="chart-owner" className={cn('grid max-w-md gap-2 rounded-xl border bg-muted/40 p-2 select-none', youOver && 'border-primary ring-2 ring-primary/40')}>
+    <div data-pos="" data-testid="chart-owner" className={cn('grid max-w-md gap-2 rounded-xl border bg-muted p-2 select-none', youOver && 'border-primary ring-2 ring-primary/40')}>
       <span className="flex items-center gap-2 px-1 text-xs font-medium text-muted-foreground">
         <UsersRound className="size-3.5" strokeWidth={1.6} />
         {t('ent.chart.ownerTop')}
@@ -139,7 +139,7 @@ function DeptPanel({ id, name, items, cost, ceiling, warned, folded, onToggle, c
   const t = useT()
   const vacant = items.filter((x) => !x.p.agent).length
   return (
-    <section className="grid content-start gap-2 rounded-xl border bg-card/40 p-2" aria-label={name} data-testid="chart-department" data-department={id}>
+    <section className="grid content-start gap-2 rounded-xl border bg-sunken p-2" aria-label={name} data-testid="chart-department" data-department={id}>
       <button
         type="button"
         onClick={onToggle}

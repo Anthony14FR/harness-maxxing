@@ -32,7 +32,7 @@ export function OrgList({
     <div className="overflow-hidden rounded-xl border" data-testid="org-list">
       <table className="w-full table-fixed border-collapse text-sm">
         <thead>
-          <tr className="border-b bg-muted/40 text-left text-xs font-medium text-muted-foreground">
+          <tr className="border-b bg-muted text-left text-xs font-medium text-muted-foreground">
             <th scope="col" className="px-3 py-2 md:w-[28%]">{t('ent.list.position')}</th>
             <th scope="col" className="hidden px-3 py-2 md:table-cell md:w-[20%]">{t('ent.list.agent')}</th>
             <th scope="col" className="hidden px-3 py-2 md:table-cell md:w-[26%]">{t('ent.list.where')}</th>
@@ -102,7 +102,7 @@ export function OrgList({
           })}
         </tbody>
         <tfoot>
-          <tr className="border-t bg-muted/40 text-xs text-muted-foreground">
+          <tr className="border-t bg-muted text-xs text-muted-foreground">
             <td className="px-3 py-2" colSpan={4}>
               {t('ent.list.total', { count: rows.length })}
             </td>

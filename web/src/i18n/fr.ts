@@ -3272,6 +3272,7 @@ export const fr: Record<keyof typeof en, string> = {
   'paste.asText': 'Coller en texte',
   // ---- Agents (Réglages -> Fonctionnalités -> agents_page)
   'nav.agents': 'Agents',
+  'nav.enterprises': 'Entreprises',
   'crons.agentHint': 'agent',
   'where.agent': 'Agent',
   'where.agentHelp': "Cette session tourne dans le dossier d'un agent : Claude y travaille avec le rôle et la mémoire de l'agent, plus ceux du topic, du projet et du niveau global.",
@@ -4805,7 +4806,6 @@ export const fr: Record<keyof typeof en, string> = {
   'browser.ts.headscale': 'Votre propre serveur Headscale',
   'browser.ts.advanced': 'Avancé : Headscale',
   'browser.ts.logout': 'Se déconnecter de Tailscale',
-  "nav.enterprises": "Entreprises",
   "features.page.enterprises": "Des organigrammes d'agents au-dessus de vos projets : des postes avec un responsable, un plafond par jour pour tout le groupe, et une vue de qui fait quoi.",
   "features.need.enterprises": "Demande les Agents.",
   "ent.title": "Entreprises",

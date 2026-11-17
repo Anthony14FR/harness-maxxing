@@ -3290,6 +3290,7 @@ export const en = {
   'paste.asText': 'Paste as text',
   // ---- Agents (Settings -> Features -> agents_page)
   'nav.agents': 'Agents',
+  'nav.enterprises': 'Enterprises',
   'crons.agentHint': 'agent',
   'where.agent': 'Agent',
   'where.agentHelp': "This session runs in an agent's folder: Claude works there with the agent's role and memory, plus the topic's, the project's and the global ones.",
@@ -4823,7 +4824,6 @@ export const en = {
   'browser.ts.headscale': 'Your own Headscale server',
   'browser.ts.advanced': 'Advanced: Headscale',
   'browser.ts.logout': 'Sign out of Tailscale',
-  "nav.enterprises": "Enterprises",
   "features.page.enterprises": "Org charts of agents above your projects: positions with a lead, a daily ceiling for the whole group, and a view of who does what.",
   "features.need.enterprises": "Needs Agents.",
   "ent.title": "Enterprises",
