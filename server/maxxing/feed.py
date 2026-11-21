@@ -49,8 +49,7 @@ MAX_RULES = 200  # per-source Telegram rules kept in config.json (read everywher
 _ALERT_COLS = (("actions", "TEXT"), ("ref", "TEXT"), ("agent", "TEXT"), ("resolved", "REAL"), ("resolution", "TEXT"),
                ("hops", "INTEGER"))     # hops: posted from an agent run (its depth + 1), carried to the runs it starts
 HANDLERS = {"approval": "approvals", "health": "health", "mailsend": "mail.outbox", "human": "browser.asks",
-            "browserexit": "browser.exits", "browsersite": "browser.domains", "devask": "devices.asks"}   # ref kind -> module with feed_action(value, action, by)
-            "browserexit": "browser.exits", "browsersite": "browser.domains",
+            "browserexit": "browser.exits", "browsersite": "browser.domains", "devask": "devices.asks",
             "enterprise": "enterprise_policy"}   # ref kind -> module with feed_action(value, action, by)
 ACTION_STYLES = ("primary", "danger", "default", "link")
 _lock = threading.Lock()

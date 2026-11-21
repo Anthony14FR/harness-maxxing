@@ -4932,7 +4932,6 @@ export const fr: Record<keyof typeof en, string> = {
   'devices.agent.title': "Appareils",
   'devices.agent.none': "Aucun appareil n’autorise encore le projet de cet agent (Réglages -> Appareils -> Qui peut l’utiliser).",
   'devices.agent.hint': "Les appareils que cet agent peut utiliser. Fermés par défaut.",
-  "nav.enterprises": "Entreprises",
   "features.page.enterprises": "Des organigrammes d'agents au-dessus de vos projets : des postes avec un responsable, un plafond par jour pour tout le groupe, et une vue de qui fait quoi.",
   "features.need.enterprises": "Demande les Agents.",
   "ent.title": "Entreprises",

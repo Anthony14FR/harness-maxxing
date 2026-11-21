@@ -41,12 +41,9 @@ def _public(path: str) -> bool:
     # /api/devices/pair (pairing code) checks its own permission
     # /api/team-peer/* (other Harness servers) checks its own signatures
     # /api/browser/mcp/<session>, /api/devices/mcp/<session> (loopback + the turn's token: api/browser.py, api/devices.py)
-    return path.startswith(("/api/auth/", "/api/hooks/", "/api/team-peer/", "/api/browser/mcp/", "/api/devices/mcp/")) \
-        or path == "/api/devices/pair"
-    # /api/browser/mcp/<session> (loopback + the turn's token: api/browser.py)
     # /api/public/desk/<token> (the enterprise front desk's chat link: the token is the permission, 64 kB cap)
-    return path.startswith(("/api/auth/", "/api/hooks/", "/api/team-peer/", "/api/browser/mcp/", "/api/public/desk/")) or \
-        path in ("/api/pc/pair", "/api/pc/mcp")
+    return path.startswith(("/api/auth/", "/api/hooks/", "/api/team-peer/", "/api/browser/mcp/", "/api/devices/mcp/", "/api/public/desk/")) \
+        or path == "/api/devices/pair"
 
 
 def cap_for(method: str, path: str, authed: bool) -> int:

@@ -4950,7 +4950,6 @@ export const en = {
   'devices.agent.title': "Devices",
   'devices.agent.none': "No device allows this agent's project yet (Settings -> Devices -> Who may use it).",
   'devices.agent.hint': "The devices this agent may use. Off by default.",
-  "nav.enterprises": "Enterprises",
   "features.page.enterprises": "Org charts of agents above your projects: positions with a lead, a daily ceiling for the whole group, and a view of who does what.",
   "features.need.enterprises": "Needs Agents.",
   "ent.title": "Enterprises",

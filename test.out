@@ -1,0 +1,25 @@
+FAILED tests/test_enterprise_desk.py::test_rate_limit_per_visitor - assert ([...
+FAILED tests/test_enterprise_desk.py::test_client_key_is_the_ip_not_a_header
+FAILED tests/test_enterprise_desk.py::test_unavailable_when_the_desk_cannot_answer
+FAILED tests/test_enterprise_desk.py::test_unprotected_occupant_closes_a_live_desk
+FAILED tests/test_enterprise_desk.py::test_owner_lists_reads_and_deletes_conversations
+FAILED tests/test_enterprise_desk.py::test_retention_prunes_old_conversations
+FAILED tests/test_enterprise_desk.py::test_weekly_insights_feed_suggestions_and_tasks
+FAILED tests/test_enterprise_desk.py::test_failed_call_is_retried_later - Key...
+FAILED tests/test_enterprise_desk.py::test_insights_now_route_and_bad_output
+FAILED tests/test_enterprise_desk.py::test_a_live_desk_closes_when_its_occupant_stops_being_restricted[keys]
+FAILED tests/test_enterprise_desk.py::test_a_live_desk_closes_when_its_occupant_stops_being_restricted[domains]
+FAILED tests/test_enterprise_desk.py::test_a_live_desk_closes_when_its_occupant_stops_being_restricted[writable]
+FAILED tests/test_enterprise_desk.py::test_a_live_desk_closes_when_its_occupant_stops_being_restricted[trust_outside]
+FAILED tests/test_enterprise_desk.py::test_a_live_desk_closes_when_its_occupant_stops_being_restricted[limits]
+FAILED tests/test_enterprise_desk.py::test_a_live_desk_closes_when_its_occupant_stops_being_restricted[limits_runs]
+FAILED tests/test_enterprise_desk.py::test_desk_run_has_no_key_no_folder_and_two_commands_only
+FAILED tests/test_enterprise_desk.py::test_a_desk_occupant_with_telegram_on_is_refused
+FAILED tests/test_enterprise_desk.py::test_delete_and_retention_remove_sessions_and_thread_messages
+FAILED tests/test_enterprise_desk.py::test_only_the_desk_prefix_is_open_to_anonymous_bodies
+FAILED tests/test_enterprise_desk.py::test_erasing_a_session_removes_its_claude_transcript
+FAILED tests/test_enterprise_desk.py::test_public_page_and_errors_follow_the_server_language
+FAILED tests/test_handoff_order.py::test_the_hold_expires_when_the_summary_never_comes
+FAILED tests/test_shopify.py::test_build_card_figures - KeyError: 'Revenue to...
+FAILED tests/test_telegram_simple.py::test_an_alert_in_emoji_fits_in_one_telegram_message
+30 failed, 3331 passed, 16 skipped, 3 warnings in 2033.52s (0:33:53)
